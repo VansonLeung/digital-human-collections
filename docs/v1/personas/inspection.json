@@ -1,0 +1,1018 @@
+{
+  "research_date": "2026-10-13",
+  "files_verified": 75,
+  "downloaded_bytes": 65927425,
+  "scope": "Checksums, container structure and declared resources; no rendered performance or speech-quality claim.",
+  "models": {
+    "seed-san": {
+      "format": "VRM 1.0",
+      "bytes": 10917800,
+      "triangles_all_mesh_primitives": 45058,
+      "mesh_count": 5,
+      "skin_count": 5,
+      "material_count": 17,
+      "image_count": 15,
+      "extensions_required": [],
+      "morph_meshes": [
+        {
+          "name": "head",
+          "target_count": 43,
+          "target_names": [
+            "eye_close",
+            "blink_L",
+            "blink_R",
+            "eye_open",
+            "eye_smile",
+            "eye_brow_up",
+            "eye_brow_up_L",
+            "eye_brow_up_R",
+            "eye_brow_down",
+            "eye_brow_down_L",
+            "eye_brow_down_R",
+            "eye_small",
+            "eye_no_hilight",
+            "eye_black_big",
+            "eye_black_small",
+            "eye_star",
+            "eye_V",
+            "eye_zitome",
+            "shock_plane",
+            "eye_angry",
+            "cheek",
+            "cheek_pop",
+            "mouse_open",
+            "mouth_wide",
+            "mouth_short",
+            "lip_a",
+            "lip_i",
+            "lip_u",
+            "lip_e",
+            "lip_o",
+            "lip_w",
+            "lip_up",
+            "lip_down",
+            "face_happy",
+            "face_angry",
+            "face_sad",
+            "face_relax",
+            "face_relax2",
+            "face_surprise",
+            "look_up",
+            "look_down",
+            "look_left",
+            "look_right"
+          ]
+        }
+      ],
+      "vrm_meta": {
+        "allowAntisocialOrHateUsage": true,
+        "allowExcessivelySexualUsage": true,
+        "allowExcessivelyViolentUsage": true,
+        "allowPoliticalOrReligiousUsage": true,
+        "allowRedistribution": true,
+        "authors": [
+          "VirtualCast, Inc."
+        ],
+        "avatarPermission": "everyone",
+        "commercialUsage": "corporation",
+        "copyrightInformation": "VirtualCast, Inc.",
+        "creditNotation": "required",
+        "licenseUrl": "https://vrm.dev/licenses/1.0/",
+        "modification": "allowModificationRedistribution",
+        "name": "Seed-san",
+        "thumbnailImage": 14,
+        "version": "1"
+      },
+      "vrm_expression_presets": {
+        "aa": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 25,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "angry": {
+          "isBinary": true,
+          "morphTargetBinds": [
+            {
+              "index": 34,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none",
+          "textureTransformBinds": [
+            {
+              "material": 11,
+              "offset": [
+                0.5,
+                0
+              ],
+              "scale": [
+                1,
+                1
+              ]
+            }
+          ]
+        },
+        "blink": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 1,
+              "node": 2,
+              "weight": 1
+            },
+            {
+              "index": 2,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "blinkLeft": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 1,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "blinkRight": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 2,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "ee": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 28,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "happy": {
+          "isBinary": true,
+          "morphTargetBinds": [
+            {
+              "index": 33,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "blend",
+          "overrideLookAt": "none",
+          "overrideMouth": "none",
+          "textureTransformBinds": [
+            {
+              "material": 11,
+              "offset": [
+                0.25,
+                0
+              ],
+              "scale": [
+                1,
+                1
+              ]
+            }
+          ]
+        },
+        "ih": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 26,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "lookDown": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 40,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "lookLeft": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 41,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "lookRight": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 42,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "lookUp": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 39,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "neutral": {
+          "isBinary": false,
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "oh": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 29,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "ou": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 27,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none"
+        },
+        "relaxed": {
+          "isBinary": true,
+          "morphTargetBinds": [
+            {
+              "index": 36,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "block",
+          "overrideLookAt": "block",
+          "overrideMouth": "none",
+          "textureTransformBinds": [
+            {
+              "material": 11,
+              "offset": [
+                0.5,
+                0.25
+              ],
+              "scale": [
+                1,
+                1
+              ]
+            }
+          ]
+        },
+        "sad": {
+          "isBinary": true,
+          "morphTargetBinds": [
+            {
+              "index": 35,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none",
+          "textureTransformBinds": [
+            {
+              "material": 11,
+              "offset": [
+                0.75,
+                0
+              ],
+              "scale": [
+                1,
+                1
+              ]
+            }
+          ]
+        },
+        "surprised": {
+          "isBinary": true,
+          "morphTargetBinds": [
+            {
+              "index": 38,
+              "node": 2,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "none",
+          "overrideLookAt": "none",
+          "overrideMouth": "none",
+          "textureTransformBinds": [
+            {
+              "material": 11,
+              "offset": [
+                0,
+                0.25
+              ],
+              "scale": [
+                1,
+                1
+              ]
+            }
+          ]
+        }
+      },
+      "vrm_custom_expressions": {}
+    },
+    "constraint-twist": {
+      "format": "VRM 1.0",
+      "bytes": 10776032,
+      "triangles_all_mesh_primitives": 36470,
+      "mesh_count": 3,
+      "skin_count": 3,
+      "material_count": 13,
+      "image_count": 19,
+      "extensions_required": [],
+      "morph_meshes": [
+        {
+          "name": "Face",
+          "target_count": 57,
+          "target_names": [
+            "Face_Blendshape.Fcl_ALL_Neutral",
+            "Face_Blendshape.Fcl_ALL_Angry",
+            "Face_Blendshape.Fcl_ALL_Fun",
+            "Face_Blendshape.Fcl_ALL_Joy",
+            "Face_Blendshape.Fcl_ALL_Sorrow",
+            "Face_Blendshape.Fcl_ALL_Surprised",
+            "Face_Blendshape.Fcl_BRW_Angry",
+            "Face_Blendshape.Fcl_BRW_Fun",
+            "Face_Blendshape.Fcl_BRW_Joy",
+            "Face_Blendshape.Fcl_BRW_Sorrow",
+            "Face_Blendshape.Fcl_BRW_Surprised",
+            "Face_Blendshape.Fcl_EYE_Natural",
+            "Face_Blendshape.Fcl_EYE_Close",
+            "Face_Blendshape.Fcl_EYE_Close_L",
+            "Face_Blendshape.Fcl_EYE_Close_R",
+            "Face_Blendshape.Fcl_EYE_Angry",
+            "Face_Blendshape.Fcl_EYE_Fun",
+            "Face_Blendshape.Fcl_EYE_Joy",
+            "Face_Blendshape.Fcl_EYE_Joy_L",
+            "Face_Blendshape.Fcl_EYE_Joy_R",
+            "Face_Blendshape.Fcl_EYE_Sorrow",
+            "Face_Blendshape.Fcl_EYE_Surprised",
+            "Face_Blendshape.Fcl_EYE_HighlightHide",
+            "Face_Blendshape.Fcl_EYE_IrisHide",
+            "Face_Blendshape.Fcl_EYE_Spread",
+            "Face_Blendshape.Fcl_MTH_Neutral",
+            "Face_Blendshape.Fcl_MTH_Close",
+            "Face_Blendshape.Fcl_MTH_Angry",
+            "Face_Blendshape.Fcl_MTH_Fun",
+            "Face_Blendshape.Fcl_MTH_Joy",
+            "Face_Blendshape.Fcl_MTH_Sorrow",
+            "Face_Blendshape.Fcl_MTH_Surprised",
+            "Face_Blendshape.Fcl_MTH_Up",
+            "Face_Blendshape.Fcl_MTH_Down",
+            "Face_Blendshape.Fcl_MTH_Small",
+            "Face_Blendshape.Fcl_MTH_Large",
+            "Face_Blendshape.Fcl_MTH_A",
+            "Face_Blendshape.Fcl_MTH_I",
+            "Face_Blendshape.Fcl_MTH_U",
+            "Face_Blendshape.Fcl_MTH_E",
+            "Face_Blendshape.Fcl_MTH_O",
+            "Face_Blendshape.Fcl_MTH_SkinFung",
+            "Face_Blendshape.Fcl_MTH_SkinFung_L",
+            "Face_Blendshape.Fcl_MTH_SkinFung_R",
+            "Face_Blendshape.Fcl_HA_Fung1",
+            "Face_Blendshape.Fcl_HA_Fung1_Low",
+            "Face_Blendshape.Fcl_HA_Fung1_Up",
+            "Face_Blendshape.Fcl_HA_Fung2",
+            "Face_Blendshape.Fcl_HA_Fung2_Low",
+            "Face_Blendshape.Fcl_HA_Fung2_Up",
+            "Face_Blendshape.Fcl_HA_Fung3",
+            "Face_Blendshape.Fcl_HA_Fung3_Low",
+            "Face_Blendshape.Fcl_HA_Fung3_Up",
+            "Face_Blendshape.Fcl_HA_Hide",
+            "Face_Blendshape.Fcl_HA_Short",
+            "Face_Blendshape.Fcl_HA_ShortLow",
+            "Face_Blendshape.Fcl_HA_ShortUp"
+          ]
+        }
+      ],
+      "vrm_meta": {
+        "allowAntisocialOrHateUsage": false,
+        "allowExcessivelySexualUsage": true,
+        "allowExcessivelyViolentUsage": true,
+        "allowPoliticalOrReligiousUsage": true,
+        "allowRedistribution": true,
+        "authors": [
+          "pixiv Inc."
+        ],
+        "avatarPermission": "everyone",
+        "commercialUsage": "corporation",
+        "copyrightInformation": "(c) 2022 pixiv Inc.",
+        "creditNotation": "unnecessary",
+        "licenseUrl": "https://vrm.dev/licenses/1.0/",
+        "modification": "allowModificationRedistribution",
+        "name": "VRM1_Constraint_Twist_Sample",
+        "thumbnailImage": 18,
+        "version": "v1.0.1"
+      },
+      "vrm_expression_presets": {
+        "aa": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 36,
+              "node": 1,
+              "weight": 1
+            }
+          ]
+        },
+        "angry": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 1,
+              "node": 1,
+              "weight": 1
+            }
+          ]
+        },
+        "blink": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 12,
+              "node": 1,
+              "weight": 1
+            }
+          ]
+        },
+        "blinkLeft": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 13,
+              "node": 1,
+              "weight": 1
+            }
+          ]
+        },
+        "blinkRight": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 14,
+              "node": 1,
+              "weight": 1
+            }
+          ]
+        },
+        "ee": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 39,
+              "node": 1,
+              "weight": 1
+            }
+          ]
+        },
+        "happy": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 3,
+              "node": 1,
+              "weight": 1
+            }
+          ],
+          "overrideBlink": "blend",
+          "overrideMouth": "blend"
+        },
+        "ih": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 37,
+              "node": 1,
+              "weight": 1
+            }
+          ]
+        },
+        "lookDown": {
+          "isBinary": false
+        },
+        "lookLeft": {
+          "isBinary": false
+        },
+        "lookRight": {
+          "isBinary": false
+        },
+        "lookUp": {
+          "isBinary": false
+        },
+        "neutral": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 0,
+              "node": 1,
+              "weight": 1
+            }
+          ]
+        },
+        "oh": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 40,
+              "node": 1,
+              "weight": 1
+            }
+          ]
+        },
+        "ou": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 38,
+              "node": 1,
+              "weight": 1
+            }
+          ]
+        },
+        "relaxed": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 2,
+              "node": 1,
+              "weight": 1
+            }
+          ]
+        },
+        "sad": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 4,
+              "node": 1,
+              "weight": 1
+            }
+          ],
+          "overrideMouth": "blend"
+        },
+        "surprised": {
+          "isBinary": false,
+          "morphTargetBinds": [
+            {
+              "index": 5,
+              "node": 1,
+              "weight": 1
+            }
+          ],
+          "overrideMouth": "blend"
+        }
+      },
+      "vrm_custom_expressions": {}
+    },
+    "haru": {
+      "format": "Live2D Cubism runtime",
+      "dependencies_checked": 25,
+      "texture_count": 2,
+      "motion_count": 6,
+      "motion_files_present": 27,
+      "expression_count": 8,
+      "parameter_ids": [
+        "ParamAngleX",
+        "ParamAngleY",
+        "ParamAngleZ",
+        "ParamTere",
+        "ParamFaceForm",
+        "ParamEyeLOpen",
+        "ParamEyeLSmile",
+        "ParamEyeROpen",
+        "ParamEyeRSmile",
+        "ParamEyeForm",
+        "ParamEyeBallForm",
+        "ParamTear",
+        "ParamEyeBallX",
+        "ParamEyeBallY",
+        "ParamBrowLY",
+        "ParamBrowRY",
+        "ParamBrowLX",
+        "ParamBrowRX",
+        "ParamBrowLAngle",
+        "ParamBrowRAngle",
+        "ParamBrowLForm",
+        "ParamBrowRForm",
+        "ParamMouthForm",
+        "ParamMouthOpenY",
+        "ParamScarf",
+        "ParamBodyAngleX",
+        "ParamBodyAngleY",
+        "ParamBodyAngleZ",
+        "ParamBodyUpper",
+        "ParamBreath",
+        "ParamBustY",
+        "ParamArmLA",
+        "ParamArmRA",
+        "ParamArmLB",
+        "ParamArmRB",
+        "ParamHandChangeR",
+        "ParamHandAngleR",
+        "ParamHandDhangeL",
+        "ParamHandAngleL",
+        "ParamHairFront",
+        "ParamHairSide",
+        "ParamHairBack"
+      ],
+      "groups": [
+        {
+          "Target": "Parameter",
+          "Name": "EyeBlink",
+          "Ids": [
+            "ParamEyeLOpen",
+            "ParamEyeROpen"
+          ]
+        },
+        {
+          "Target": "Parameter",
+          "Name": "LipSync",
+          "Ids": [
+            "ParamMouthOpenY"
+          ]
+        }
+      ],
+      "note": "Cubism Core execution and visual lip-sync have not been tested."
+    },
+    "ren": {
+      "format": "Live2D Cubism runtime",
+      "dependencies_checked": 12,
+      "texture_count": 1,
+      "motion_count": 3,
+      "motion_files_present": 3,
+      "expression_count": 5,
+      "parameter_ids": [
+        "ParamAngleX",
+        "ParamAngleY",
+        "ParamAngleZ",
+        "ParamEyeLOpen",
+        "ParamEyeLSmile",
+        "ParamEyeROpen",
+        "ParamEyeRSmile",
+        "ParamEyeBallX",
+        "ParamEyeBallY",
+        "ParamEyeSize",
+        "ParamBrowLY",
+        "ParamBrowRY",
+        "ParamBrowLX",
+        "ParamBrowRX",
+        "ParamBrowLAngle",
+        "ParamBrowRAngle",
+        "ParamBrowLForm",
+        "ParamBrowRForm",
+        "ParamMouthForm",
+        "ParamMouthOpenY",
+        "ParamBodyAngleX",
+        "ParamBodyAngleY",
+        "ParamBodyAngleZ",
+        "ParamWaistAngleZ",
+        "ParamBodyCenter",
+        "ParamBreath",
+        "ParamLeftShoulderUp",
+        "ParamRightShoulderUp",
+        "ParamLegR",
+        "ParamLegL",
+        "ParamBodyAngleX2",
+        "ParamBodyAngleY2",
+        "ParamBodyCenter2",
+        "ParamLeftShoulderUp2",
+        "ParamRightShoulderUp2",
+        "ParamArmL01",
+        "ParamArmL02",
+        "ParamArmL03",
+        "ParamHandL",
+        "ParamHandLDrawOrder",
+        "ParamArmR01",
+        "ParamArmR02",
+        "ParamArmR03",
+        "ParamHandR",
+        "ParamHandRDrawOrder",
+        "ParamHairFront",
+        "ParamHairSide",
+        "ParamHairBack",
+        "ParamHairFrontFuwa",
+        "ParamHairSideFuwa",
+        "ParamHairBackFuwa",
+        "ParamCollarString",
+        "ParamNecklace1",
+        "ParamNecklace2",
+        "ParamNecklace3",
+        "ParamPullHandle",
+        "ParamPocketString",
+        "ParamJacket",
+        "ParamCollarFuwa",
+        "ParamCollarStringFuwa",
+        "ParamHologram",
+        "ParamTransparent",
+        "ParamHologramPattern",
+        "ParamMonochrome",
+        "ParamNight",
+        "ParamLight",
+        "ParamDisplayWidth1",
+        "ParamDisplayHeight1",
+        "ParamDisplayWidth2",
+        "ParamDisplayHeight2",
+        "ParamDisplayAngle",
+        "ParamNoise",
+        "ParamNoiseRotate"
+      ],
+      "groups": [
+        {
+          "Target": "Parameter",
+          "Name": "EyeBlink",
+          "Ids": [
+            "ParamEyeLOpen",
+            "ParamEyeROpen"
+          ]
+        },
+        {
+          "Target": "Parameter",
+          "Name": "LipSync",
+          "Ids": [
+            "ParamMouthOpenY"
+          ]
+        }
+      ],
+      "note": "Cubism Core execution and visual lip-sync have not been tested."
+    },
+    "mpfb-human": {
+      "format": "GLB 2.0",
+      "bytes": 36815920,
+      "triangles_all_mesh_primitives": 83686,
+      "mesh_count": 8,
+      "skin_count": 1,
+      "material_count": 8,
+      "image_count": 7,
+      "extensions_required": [],
+      "morph_meshes": [
+        {
+          "name": "base",
+          "target_count": 66,
+          "target_names": [
+            "browDownRight",
+            "viseme_RR",
+            "mouthShrugLower",
+            "browDownLeft",
+            "jawRight",
+            "mouthFunnel",
+            "eyeSquintRight",
+            "mouthPressRight",
+            "eyeLookOutLeft",
+            "mouthFrownLeft",
+            "eyeWideLeft",
+            "mouthDimpleRight",
+            "jawForward",
+            "viseme_FF",
+            "tongueOut",
+            "cheekPuff",
+            "jawLeft",
+            "noseSneerLeft",
+            "eyeLookOutRight",
+            "viseme_PP",
+            "browInnerUp",
+            "viseme_DD",
+            "viseme_aa",
+            "mouthShrugUpper",
+            "noseSneerRight",
+            "mouthLowerDownRight",
+            "viseme_kk",
+            "viseme_nn",
+            "mouthStretchLeft",
+            "mouthLowerDownLeft",
+            "mouthClose",
+            "cheekSquintLeft",
+            "eyeBlinkLeft",
+            "mouthPressLeft",
+            "eyeLookUpLeft",
+            "eyeSquintLeft",
+            "mouthPucker",
+            "viseme_TH",
+            "viseme_SS",
+            "eyeLookDownRight",
+            "mouthSmileRight",
+            "eyeWideRight",
+            "viseme_E",
+            "mouthDimpleLeft",
+            "eyeBlinkRight",
+            "viseme_I",
+            "eyeLookInRight",
+            "mouthLeft",
+            "mouthRollUpper",
+            "mouthFrownRight",
+            "eyeLookDownLeft",
+            "jawOpen",
+            "viseme_U",
+            "mouthUpperUpRight",
+            "mouthSmileLeft",
+            "browOuterUpLeft",
+            "mouthRollLower",
+            "mouthUpperUpLeft",
+            "mouthStretchRight",
+            "eyeLookUpRight",
+            "mouthRight",
+            "viseme_O",
+            "eyeLookInLeft",
+            "browOuterUpRight",
+            "viseme_CH",
+            "cheekSquintRight"
+          ]
+        },
+        {
+          "name": "high-poly",
+          "target_count": 8,
+          "target_names": [
+            "eyeLookOutLeft",
+            "eyeLookOutRight",
+            "eyeLookUpLeft",
+            "eyeLookDownRight",
+            "eyeLookInRight",
+            "eyeLookDownLeft",
+            "eyeLookUpRight",
+            "eyeLookInLeft"
+          ]
+        },
+        {
+          "name": "mind_eyebrows_02",
+          "target_count": 23,
+          "target_names": [
+            "browDownRight",
+            "browDownLeft",
+            "eyeLookOutLeft",
+            "eyeWideLeft",
+            "noseSneerLeft",
+            "eyeLookOutRight",
+            "browInnerUp",
+            "noseSneerRight",
+            "cheekSquintLeft",
+            "eyeBlinkLeft",
+            "eyeLookUpLeft",
+            "eyeLookDownRight",
+            "mouthSmileRight",
+            "eyeWideRight",
+            "eyeBlinkRight",
+            "eyeLookInRight",
+            "eyeLookDownLeft",
+            "mouthSmileLeft",
+            "browOuterUpLeft",
+            "eyeLookUpRight",
+            "eyeLookInLeft",
+            "browOuterUpRight",
+            "cheekSquintRight"
+          ]
+        },
+        {
+          "name": "mind_eyelashes_02",
+          "target_count": 33,
+          "target_names": [
+            "browDownRight",
+            "browDownLeft",
+            "eyeSquintRight",
+            "eyeLookOutLeft",
+            "eyeWideLeft",
+            "mouthDimpleRight",
+            "cheekPuff",
+            "noseSneerLeft",
+            "eyeLookOutRight",
+            "noseSneerRight",
+            "mouthStretchLeft",
+            "cheekSquintLeft",
+            "mouthPressLeft",
+            "eyeLookUpLeft",
+            "eyeSquintLeft",
+            "mouthPucker",
+            "eyeLookDownRight",
+            "mouthSmileRight",
+            "eyeWideRight",
+            "mouthDimpleLeft",
+            "eyeLookInRight",
+            "mouthLeft",
+            "mouthFrownRight",
+            "eyeLookDownLeft",
+            "jawOpen",
+            "mouthSmileLeft",
+            "mouthStretchRight",
+            "eyeLookUpRight",
+            "mouthRight",
+            "eyeLookInLeft",
+            "cheekSquintRight",
+            "eyeBlinkLeft",
+            "eyeBlinkRight"
+          ]
+        },
+        {
+          "name": "teeth_base",
+          "target_count": 12,
+          "target_names": [
+            "jawRight",
+            "jawForward",
+            "jawLeft",
+            "viseme_PP",
+            "viseme_DD",
+            "viseme_aa",
+            "viseme_kk",
+            "viseme_nn",
+            "viseme_TH",
+            "viseme_E",
+            "jawOpen",
+            "viseme_O"
+          ]
+        },
+        {
+          "name": "tongue01",
+          "target_count": 13,
+          "target_names": [
+            "jawRight",
+            "jawForward",
+            "tongueOut",
+            "jawLeft",
+            "viseme_PP",
+            "viseme_DD",
+            "viseme_aa",
+            "viseme_kk",
+            "viseme_nn",
+            "viseme_TH",
+            "viseme_E",
+            "jawOpen",
+            "viseme_O"
+          ]
+        }
+      ],
+      "vrm_meta": null,
+      "vrm_expression_presets": {},
+      "vrm_custom_expressions": {}
+    }
+  }
+}
