@@ -24,11 +24,11 @@ flowchart LR
     API --> ASR[Existing Python ASR :38001]
     ASR -->|editable transcript| API
     UI <-->|commands and events| API
-    API <-->|answer text| LLM[Configured LLM endpoint]
+    API <-->|tagged answer text| LLM[Configured LLM endpoint]
     API --> TTS[Existing Python TTS :38002]
-    TTS -->|complete WAV| API
-    API --> CUES[Local CPU mouth-cue analysis]
-    API -->|WAV URL and timed cues| UI
+    TTS -->|phrase WAVs| API
+    API -. optional Rhubarb .-> CUES[Local CPU mouth-cue analysis]
+    API -->|ordered phrase URLs and performance plans| UI
     CUES --> API
     UI --> AUDIO[Web Audio playback clock]
     AUDIO --> AVATAR[VRM or Live2D renderer]
@@ -42,8 +42,8 @@ flowchart LR
 | Recording uploads | Route-scoped Multer with file/count/field limits | Parse browser multipart recordings before forwarding them using native `FormData`. |
 | Default avatar | Three.js + `@pixiv/three-vrm` | Existing sample models expose named vowel, blink and emotion expressions. |
 | Illustrated avatar | Official Cubism Web SDK/Core behind a Live2D adapter | Reuses the speech/playback flow with the downloaded model packages. |
-| Mouth timing | Rhubarb CLI in a bounded asynchronous subprocess | Produces timed mouth categories from the actual reply WAV on the CPU. |
-| Playback | Web Audio, one source and one speech timeline | Keeps voice and mouth motion synchronized and makes immediate Stop possible. |
+| Mouth animation | Browser RMS amplitude by default; optional Rhubarb subprocess | Starts with the available WAV immediately; Rhubarb adds phonetic categories when selected. |
+| Playback | Web Audio, queued sources on one audio clock | Schedules phrases in order and synchronizes mouth, gestures, pause and replay. |
 | Storage | Bounded in-memory sessions and expiring media files | Appropriate for the initial single-user local application. |
 
 Use the M1 Max's integrated graphics for browser rendering. No separate CUDA worker is required by this design. Performance under simultaneous speech inference still needs measurement. The LLM endpoint's location remains independently configurable; strict offline operation also requires a local LLM and locally cached dependencies.
@@ -150,9 +150,9 @@ Values and cues above are illustrative. Transmit audio as an ordinary media resp
 2. Typed input can be sent immediately. For voice input, use `MediaRecorder` with a browser-supported MIME type, upload the recording, and let the user edit the returned transcript before sending.
 3. Accept one active turn per session. Bound input/history and stream only user-visible assistant content from the LLM. Reasoning/tool fields must not become spoken text.
 4. Store the completed textual answer when text generation finishes. Keep playback status separate, so a speech failure does not lose a valid answer. Exclude unfinished interrupted assistant text from subsequent LLM context while retaining a visible interrupted message.
-5. Convert the answer to a speech-friendly string and request one complete WAV from TTS. Respect its real sample rate and declared limits.
-6. Run cue analysis on that exact WAV. Return audio URL and cues together. The browser should begin speech only after the audio, avatar and cues are ready.
-7. Decode/play through Web Audio, sampling cues against the scheduled audio start and current audio clock. Apply mouth poses every animation frame; blink/gaze are separate idle controls.
+5. Parse streamed performance tags into clean chat text and complete speech phrases. Synthesize phrases sequentially through the persistent TTS service, starting before LLM completion when a phrase is ready. Respect real sample rates and declared limits.
+6. Emit `speech.ready` for each phrase with its index, clean text, performance plan, and media URL. Amplitude mode needs no analysis; optional Rhubarb analyzes each phrase WAV. Emit `speech.queue.finished` after production completes, and retain the turn until the browser finishes all audio.
+7. Decode/play through Web Audio. Amplitude mode reads short waveform windows with an `AnalyserNode` before the mute gain, gates silence, and smooths RMS into continuous mouth opening. Rhubarb mode samples cues against the audio clock. Both modes close on pause/Stop/completion; blink/gaze remain separate idle controls.
 8. Finish on actual browser playback completion. Return to idle and release mouth weights. Treat playback failure explicitly and offer retry or a labeled audio-only path.
 
 **WebSocket message handling must stay responsive while a turn runs.** Track the active pipeline Promise and an `AbortController` for each turn; dispatch long work without blocking command handling. Serialize command/state mutations, serialize outbound events, bound queues, and abort/invalidate the active turn on Stop, Reset or connection loss. Express error middleware does not catch detached Promise or `ws` handler failures; handle those errors explicitly.
@@ -171,9 +171,55 @@ Rhubarb's English recognizer and non-English `phonetic` recognizer provide initi
 
 For Live2D, the acquired Haru/Ren models declare mouth opening and mouth form; these offer less articulatory detail than a full speech rig. Obtain official Cubism Core/Web dependencies when adding that adapter. Live2D mouth form should not be treated as a standardized vowel selector. Detailed consonant shaping may require a custom rig or the extra MPFB GLB sample.
 
-Volume-driven mouth movement is useful for an early wiring check, but the existing plan correctly distinguishes it from validated lip-sync. HeadAudio is a later browser-side experiment; its Mandarin/Cantonese behavior remains unverified. Preserve the distinction between functional playback, plausible mouth motion and validated synchronization.
+Amplitude-driven mouth opening is the default for conversational latency. It drives Live2D `ParamMouthOpenY` and VRM `aa` directly without a Rhubarb subprocess or precomputed cues. It follows voice intensity and silence, but does not recognize phonemes or distinguish vowel shapes. Rhubarb remains selectable for phonetic categories. HeadAudio is a later browser-side experiment; its Mandarin/Cantonese behavior remains unverified.
+
+Talking performance follows actual browser playback. Optional `<emotion name="happy" />` and `<gesture name="open_hand" strength="0.5" />` tags precede a phrase. Emotions persist until replaced; gestures apply to the following phrase. Supported gestures are `nod`, `shake_head`, `wave`, `open_hand`, and `shrug`. The prompt asks for sparse gestures and no timestamps. Known malformed/unfinished control tags and unsupported gesture names are ignored; clean text is streamed to chat and stored in history. No control tags reach TTS.
+
+The backend's incremental parser buffers tags split across provider chunks. Sentence boundaries, explicit tag boundaries, and bounded long clauses produce speech phrases. A single synthesis queue prevents concurrent inference against the persistent TTS worker. Replies are bounded to 32 phrases and 120 seconds of generated audio. The first completed phrase can play while later text/audio is still being produced. Additional TTS calls can affect latency and prosody; no ASR/forced-alignment pass is added.
+
+The browser fetches/decode-ahead and schedules contiguous ready phrases on `AudioContext.currentTime`. Gesture curves use the phrase's actual playback position and decoded duration, not wall-clock timers. Pause freezes the timeline and fades to rest; resume continues the same gesture. Stop aborts fetches, stops all scheduled sources, and cancels future phrases. Replay reuses the complete saved audio/performance sequence. If synthesis falls behind playback, the avatar rests during the queue gap. Timing is at phrase boundaries, not individual words.
+
+Code responsibilities:
+
+| Path | Responsibility |
+| --- | --- |
+| `shared/performance.ts` | Validated gesture, expression and phrase schemas |
+| `backend/src/llm/prompts.ts` | Language and optional performance instructions |
+| `backend/src/llm/taggedReplyParser.ts` | Incremental tag removal, metadata and phrase boundaries |
+| `backend/src/speech/phraseQueue.ts` | Serial ordered synthesis with cancellation |
+| `frontend/src/audio/SpeechQueuePlayer.ts` | Audio scheduling, buffering, pause, Stop, replay |
+| `frontend/src/audio/amplitude.ts` | Voice-to-mouth response; preserves `.09` / `.55` tuning |
+| `frontend/src/performance/` | SDK-independent controller, gesture curves and bounded pose composition |
+| `frontend/src/avatars/rig.ts` | Common rig adapter contract |
+| `frontend/src/avatars/vrm/` | VRM scene, normalized-bone adapter and tuning |
+| `frontend/src/avatars/live2d/` | Initial face/head adapter; body cues omitted |
+
+Explicit phrase plans suppress the automatic arm loop. Idle breathing, blinking and small torso/head shifts remain separate. VRM pose offsets use captured resting rotations, never hip/root translation. Missing optional bones are ignored. Seed-san's binary texture-atlas expressions have geometry-only speech variants so smooth smiles do not slide facial textures. `frontend/src/avatars/vrm/tuning.ts` holds body strength and the preserved mouth ratio of `1`.
+
+All first-party TypeScript/TSX/CSS/JSON/HTML source is formatted, with separated declarations and methods. Use `npm run format` and `npm run format:check`; vendor assets, generated output, runtime files, lockfiles and `.env` files are excluded. `npm run test:queue` checks real Chrome ordering, audio-clock timing, pause, replay and Stop. `npm run test:avatars` checks real Mira/Seed-san bones, smile morphs, a stationary root, return to rest and clock-directed gestures.
+
+Known local asset limitation: Ren uses MOC version 6 and offscreen rendering, while the installed Core/adapter targets older formats. It needs a compatible Core and renderer upgrade together. Use Haru for Live2D amplitude verification with the current runtime.
 
 ## Configuration and language behavior
+
+Phrase emotions now reach both the TTS JSON request and the VRM performance
+controller. `normal` and `surprise` tag aliases normalize to `neutral` and
+`surprised`. The LLM is instructed to emit an initial emotion and change it when
+the delivery changes. Facial weights are sustained through the phrase rather
+than fading surprise after 2.2 seconds; neutral clears the expression.
+
+Tune individual emotions in `frontend/src/performance/emotions.ts` or scale all
+VRM facial weights with `facialExpressionStrength` in
+`frontend/src/avatars/vrm/tuning.ts`. Speech variants preserve mouth animation
+independently of facial preset overrides. Binary atlas expressions such as
+Seed-san's switch textures discretely and interpolate only their geometry.
+Thoughtful uses the authored `relaxed` preset and a head tilt.
+
+The Python TTS adapter maps emotion names to delivery instructions in
+`../services/tts/emotions.py`. Its `.env` controls reference audio and optional
+stable voice style. VoxCPM2 supports this path; Qwen3 1.7B Base and 0.6B
+CustomVoice do not implement instruction control. Inspect service health's
+`emotion_control` before claiming emotional speech support.
 
 Read the application root's existing `.env` through an explicit resolved path, with operating-system variables taking precedence. Preserve `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL_NAME`; join the chat-completions path once and handle endpoint streaming capability deliberately. Never put credentials into `VITE_*` variables or event payloads.
 
@@ -186,7 +232,7 @@ ASR_BASE_URL=http://127.0.0.1:38001
 TTS_BASE_URL=http://127.0.0.1:38002
 DEFAULT_PERSONA=constraint-twist
 DEFAULT_LANGUAGE=en
-LIPSYNC_PROVIDER=rhubarb
+LIPSYNC_PROVIDER=amplitude
 RHUBARB_BIN=rhubarb
 LIPSYNC_TIMEOUT_SECONDS=60
 SPEECH_TIMEOUT_SECONDS=180
@@ -197,6 +243,12 @@ SESSION_TTL_SECONDS=3600
 The ASR/TTS base URLs above are set in the application's `.env` and `.env.example` as requested; the other additions remain proposed defaults. Add explicit LLM timeouts and bounded retry/history limits when implementing. Keep actual model settings and inference limits in each speech service's own environment.
 
 Use explicit language mapping: UI `en` → ASR `English` / TTS `english`; `zh` → ASR `Chinese` / TTS `chinese`; `yue` → ASR `Cantonese` and a separately verified TTS path. Query service health and validate chosen presets. Input-language support does not establish output voice quality.
+
+The reply selector defaults to `auto`, with English, Mandarin and Cantonese overrides. Auto resolves Cantonese text markers first, otherwise Han text to Mandarin (or preserves an established Cantonese conversation), and Latin text to English. Symbols/numbers retain the previous language. It adds no LLM classification call. Formal Chinese text alone cannot reliably distinguish spoken Cantonese from Mandarin; use an override when needed. The resolved language reaches both LLM and TTS. Auto microphone requests send `auto` to ASR, and recognized language provides a session hint. Reset clears that hint.
+
+Validate changes with `npm test`, `npm run build`, `npm run format:check`, `npm run test:playback`, `npm run test:queue`, `npm run test:avatars`, and `npm run test:browser`. The playback check runs real Chrome Web Audio against a silence/tone fixture to check mute, pause/resume, Stop, natural completion, and Rhubarb compatibility. The full browser check uses mock speech/LLM services and a deliberately missing Rhubarb binary in amplitude mode; it does not establish real Cantonese pronunciation quality.
+
+To run the UI checks against the three avatars supported by the installed runtime, use `BROWSER_PERSONAS=haru,seed-san,constraint-twist npm run test:browser`. The default checks all four personas and exposes Ren's existing runtime incompatibility.
 
 English and Mandarin can use the current TTS presets for initial evaluation. Cantonese text and transcription can be exercised independently; expose Cantonese speech only when listening checks pass. If the current voice fails, the persona research records a separate local CosyVoice evaluation candidate. That would require validating its environment/adapter, rather than assuming a configuration-only swap.
 

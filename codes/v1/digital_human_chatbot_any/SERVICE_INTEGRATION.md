@@ -135,7 +135,7 @@ Use explicit mappings: English UI → ASR `English`/`en` and TTS `english`; Mand
 
 The ASR normalizer includes Cantonese aliases. The TTS endpoint accepts only the loaded engine's capabilities and has no special Cantonese adapter. Good Cantonese transcription does not establish good Cantonese synthesis. Check the actual language/preset lists after startup and use listening tests before enabling Cantonese voice mode.
 
-Neither HTTP service produces mouth cues. Analyze the **assistant's generated WAV** with the proposed local lip-sync component and drive VRM/Live2D from the same playback clock. The user's ASR alignment timestamps refer to a different recording and cannot synchronize the assistant's response.
+Neither HTTP service produces mouth cues. The default `LIPSYNC_PROVIDER=amplitude` drives VRM/Live2D mouth opening from the **assistant's generated WAV** during browser playback, without a server analysis stage. Optional `LIPSYNC_PROVIDER=rhubarb` generates timed phonetic categories from that same WAV before playback. The user's ASR alignment timestamps refer to a different recording and cannot synchronize the assistant's response.
 
 ## Launch and verification
 

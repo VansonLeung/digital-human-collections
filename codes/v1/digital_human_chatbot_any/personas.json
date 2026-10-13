@@ -1,0 +1,38 @@
+[
+  {
+    "id": "constraint-twist",
+    "name": "Mira",
+    "renderer": "vrm",
+    "modelUrl": "/personas/constraint-twist/vrm/VRM1_Constraint_Twist_Sample.vrm",
+    "description": "A calm, curious guide · stylized 3D",
+    "credit": "VRM1 Constraint Twist Sample · © 2022 pixiv Inc.",
+    "licenseUrl": "https://vrm.dev/en/licenses/1.0/"
+  },
+  {
+    "id": "seed-san",
+    "name": "Seed-san",
+    "renderer": "vrm",
+    "modelUrl": "/personas/seed-san/vrm/Seed-san.vrm",
+    "description": "An upbeat technical companion · stylized 3D",
+    "credit": "Seed-san model by VirtualCast, Inc. · credit required",
+    "licenseUrl": "https://vrm.dev/en/licenses/1.0/"
+  },
+  {
+    "id": "haru",
+    "name": "Haru",
+    "renderer": "live2d",
+    "modelUrl": "/personas/haru/Haru.model3.json",
+    "description": "An expressive illustrated companion · Live2D",
+    "credit": "This content uses sample data owned and copyrighted by Live2D Inc. The sample data are utilized in accordance with terms and conditions set by Live2D Inc. This content itself is created at the author’s sole discretion.",
+    "licenseUrl": "https://www.live2d.com/en/learn/sample/model-terms/"
+  },
+  {
+    "id": "ren",
+    "name": "Ren Foster",
+    "renderer": "live2d",
+    "modelUrl": "/personas/ren/Ren.model3.json",
+    "description": "A friendly illustrated host · Live2D",
+    "credit": "This content uses sample data owned and copyrighted by Live2D Inc. The sample data are utilized in accordance with terms and conditions set by Live2D Inc. This content itself is created at the author’s sole discretion.",
+    "licenseUrl": "https://www.live2d.com/en/learn/sample/model-terms/"
+  }
+]

@@ -21,4 +21,4 @@ test = ["httpx>=0.27,<1"]
 digital-human-tts = "tts_api:main"
 
 [tool.setuptools]
-py-modules = ["tts_api", "stream_audio"]
+py-modules = ["tts_api", "stream_audio", "emotions"]

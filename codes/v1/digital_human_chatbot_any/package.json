@@ -1,0 +1,40 @@
+{
+  "name": "digital-human-chatbot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
+  "engines": {
+    "node": ">=24 <27"
+  },
+  "scripts": {
+    "setup": "tsx scripts/setup.ts",
+    "predev": "npm run build -w @digital-human/shared",
+    "dev": "concurrently -k -n api,web 'npm run dev -w @digital-human/backend' 'npm run dev -w @digital-human/frontend'",
+    "dev:all": "tsx scripts/dev-all.ts",
+    "build": "npm run build -w @digital-human/shared && npm run build -w @digital-human/backend && npm run build -w @digital-human/frontend",
+    "start": "npm run start -w @digital-human/backend",
+    "test": "npm run build -w @digital-human/shared && tsx --test backend/tests/*.test.ts",
+    "check": "npm run build -w @digital-human/shared && tsc --noEmit -p backend && tsc --noEmit -p frontend",
+    "check:services": "tsx scripts/check-services.ts",
+    "benchmark": "tsx scripts/benchmark.ts",
+    "test:browser": "tsx scripts/browser-check.ts",
+    "test:playback": "tsx scripts/playback-check.ts",
+    "test:avatars": "tsx scripts/avatar-check.ts",
+    "format": "prettier --write \"{backend/src,backend/tests,frontend/src,shared,scripts}/**/*.{ts,tsx,css}\" \"{.,backend,frontend,shared}/*.{json,ts}\" \"frontend/index.html\"",
+    "format:check": "prettier --check \"{backend/src,backend/tests,frontend/src,shared,scripts}/**/*.{ts,tsx,css}\" \"{.,backend,frontend,shared}/*.{json,ts}\" \"frontend/index.html\"",
+    "test:queue": "tsx scripts/queue-check.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "concurrently": "^9.2.1",
+    "playwright": "^1.56.0",
+    "prettier": "^3.9.10",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

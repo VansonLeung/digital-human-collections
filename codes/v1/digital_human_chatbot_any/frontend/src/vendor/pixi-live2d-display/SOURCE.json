@@ -1,0 +1,8 @@
+{
+  "package": "pixi-live2d-display",
+  "version": "0.4.0",
+  "source": "https://registry.npmjs.org/pixi-live2d-display/-/pixi-live2d-display-0.4.0.tgz",
+  "file": "dist/cubism4.es.js",
+  "sha256": "8d2ed8bbd95aac6b157fe5a3cffc0ea83fa804efba853d93e12bf94f53c293b7",
+  "reason": "Vendor the unmodified MIT runtime module; omit upstream publishing tools from application dependencies."
+}

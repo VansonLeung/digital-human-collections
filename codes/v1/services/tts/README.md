@@ -2,7 +2,9 @@
 
 Loads one model at startup and returns a complete mono PCM16 WAV for each answer.
 The API never plays audio on the Mac. The default model is
-`mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit`, with voice `Vivian`.
+`mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit`, using the local `speaker.wav`
+reference voice. This Base model does not apply style instructions; the API
+supports them for compatible models such as VoxCPM2.
 Change `TTS_MODEL_ID`, `TTS_VOICE`, and `TTS_LANGUAGE` in `.env` as needed.
 
 ## Start
@@ -47,6 +49,21 @@ JSON fields:
 | `voice` | Optional; defaults to `TTS_VOICE`. Supported voices are listed by `/health`. |
 | `language` | Optional; defaults to `TTS_LANGUAGE=auto`. Use model values such as `english` and `chinese`; inspect `/health`. |
 | `instruct` | Optional voice style instruction for models that support it. |
+| `emotion` | Optional `neutral`, `happy`, `sad`, `surprised`, or `thoughtful`. Converted to a delivery instruction and combined with `TTS_VOICE_STYLE` and `instruct`. |
+
+The chatbot sends the same phrase emotion to both TTS and the avatar. The LLM
+must choose an emotion before its first sentence; later tags can change it.
+Control instructions remain separate from displayed text and speech transcripts.
+VoxCPM2 uses `instruct` for style control with reference cloning. See the
+[MLX implementation](https://github.com/Blaizzy/mlx-audio/blob/main/mlx_audio/tts/models/voxcpm2/voxcpm2.py).
+
+Qwen3 **1.7B Base** clones a voice but does not apply `instruct`. Qwen3 **0.6B
+CustomVoice** also lacks instruction control; **1.7B CustomVoice/VoiceDesign**
+support it. See the [official model capability table](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base).
+Inspect `/health` → `emotion_control` and the WAV response's `X-Emotion-Control`
+header (`supported`, `unsupported`, or `unknown`). Unsupported models log the
+limitation while continuing to generate speech. These capabilities describe
+instruction routing; listening checks establish the quality of the result.
 
 The result has `Content-Type: audio/wav`. Response headers include
 `X-Sample-Rate`, `X-Audio-Duration` (seconds), and `X-Processing-Seconds`.
@@ -63,7 +80,11 @@ remain blocked until it completes.
 
 The request cannot switch models or name local reference-audio paths. For another
 model, change the service configuration and restart; clear `TTS_VOICE` if it does
-not provide preset voices. Reference-audio cloning remains a local CLI feature.
+not provide preset voices. `TTS_REF_AUDIO` and `TTS_REF_TEXT` configure server-side
+voice cloning; relative audio paths resolve against the TTS directory. Clear
+both for preset CustomVoice models. The CLI also accepts reference arguments.
+`TTS_VOICE_STYLE` optionally supplies a stable voice description, while `emotion`
+changes the delivery for each phrase. It defaults to empty.
 Language and voice capabilities vary by model; Chinese support alone does not
 establish Cantonese synthesis quality.
 

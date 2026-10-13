@@ -14,13 +14,14 @@ from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from stream_audio import TTSEngine
+from emotions import Emotion, speech_instruction
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class Settings:
-    model_id: str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit"
+    model_id: str = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"
     voice: str | None = "Vivian"
     language: str = "auto"
     max_text_chars: int = 2000
@@ -28,6 +29,9 @@ class Settings:
     max_tokens: int = 1024
     host: str = "127.0.0.1"
     port: int = 8002
+    voice_style: str = ""
+    ref_audio: str | None = "./speaker.wav"
+    ref_text: str | None = "你睇吓你，功課又唔做，考試淨係識得出貓"
 
     def __post_init__(self):
         if min(self.max_text_chars, self.max_audio_seconds, self.max_tokens) <= 0:
@@ -48,6 +52,9 @@ class Settings:
             max_tokens=int(env.get("TTS_MAX_TOKENS", defaults.max_tokens)),
             host=env.get("TTS_HOST", defaults.host),
             port=int(env.get("TTS_PORT", defaults.port)),
+            voice_style=env.get("TTS_VOICE_STYLE", defaults.voice_style),
+            ref_audio=env.get("TTS_REF_AUDIO", defaults.ref_audio) or None,
+            ref_text=env.get("TTS_REF_TEXT", defaults.ref_text) or None,
         )
 
 
@@ -56,6 +63,7 @@ class SpeechRequest(BaseModel):
     voice: str | None = Field(None, max_length=100)
     language: str | None = Field(None, max_length=100)
     instruct: str | None = Field(None, max_length=1000)
+    emotion: Emotion | None = None
 
     class Config:
         extra = "forbid"
@@ -64,6 +72,9 @@ class SpeechRequest(BaseModel):
 def create_app(settings=None, engine=None):
     settings = settings or Settings.from_env()
     engine = engine or TTSEngine(settings.model_id)
+    ref_audio = settings.ref_audio
+    if ref_audio and not Path(ref_audio).is_absolute():
+        ref_audio = str(Path(__file__).parent / ref_audio)
     gate = asyncio.Lock()
 
     @asynccontextmanager
@@ -84,7 +95,8 @@ def create_app(settings=None, engine=None):
     async def health():
         return {"status": "ready" if app.state.ready else "starting",
                 "model": settings.model_id, "busy": gate.locked(),
-                "voices": engine.voices, "languages": engine.languages}
+                "voices": engine.voices, "languages": engine.languages,
+                "emotion_control": getattr(engine, "emotion_control", "unknown")}
 
     @app.post("/v1/audio/speech", responses={200: {"content": {"audio/wav": {}}}},
               response_class=Response)
@@ -97,10 +109,19 @@ def create_app(settings=None, engine=None):
                                 headers={"Retry-After": "1"})
         async with gate:
             def infer():
+                if request.emotion and getattr(engine, "emotion_control", "unknown") == "unsupported":
+                    logger.warning(
+                        "%s does not support emotion instructions; delivery follows the reference voice.",
+                        settings.model_id,
+                    )
                 return engine.synthesize(
-                    text, voice=request.voice or settings.voice,
+                    text, voice=(request.voice or settings.voice) if engine.voices else None,
                     language=request.language or settings.language,
-                    instruct=request.instruct, max_tokens=settings.max_tokens,
+                    ref_audio=ref_audio, ref_text=settings.ref_text,
+                    instruct=speech_instruction(
+                        request.emotion, settings.voice_style, request.instruct,
+                    ),
+                    max_tokens=settings.max_tokens,
                     max_audio_seconds=settings.max_audio_seconds,
                 )
 
@@ -128,6 +149,7 @@ def create_app(settings=None, engine=None):
                 "Content-Disposition": 'inline; filename="speech.wav"',
                 "X-Sample-Rate": str(sample_rate), "X-Audio-Duration": str(duration),
                 "X-Processing-Seconds": str(time.perf_counter() - started),
+                "X-Emotion-Control": getattr(engine, "emotion_control", "unknown"),
             })
 
     return app

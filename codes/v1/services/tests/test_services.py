@@ -21,6 +21,7 @@ from asr_api import Settings as ASRSettings, create_app as asr_app
 from asr_audio import ASREngine
 from stream_audio import TTSEngine
 from tts_api import Settings as TTSSettings, create_app as tts_app
+from emotions import EMOTION_INSTRUCTIONS
 
 
 def wav_bytes(seconds=0.1, rate=16000):
@@ -142,6 +143,50 @@ class ASRAPITests(unittest.TestCase):
 
 
 class TTSAPITests(unittest.TestCase):
+    def test_emotion_capability_distinguishes_cloning_from_instruction_control(self):
+        for model_id, expected in [
+            ("mlx-community/VoxCPM2-8bit", "supported"),
+            ("mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit", "unsupported"),
+            ("mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit", "unsupported"),
+            ("mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit", "supported"),
+            ("other", "unknown"),
+        ]:
+            engine = TTSEngine(model_id)
+            self.assertEqual(engine.emotion_control, expected)
+            with patch.object(engine, "load"), TestClient(tts_app(TTSSettings(model_id=model_id), engine)) as client:
+                self.assertEqual(client.get("/health").json()["emotion_control"], expected)
+
+    def test_emotions_become_style_instructions_without_changing_spoken_text(self):
+        engine = TTSEngine("fake")
+        calls = []
+
+        def generate(text, **kwargs):
+            calls.append((text, kwargs))
+            yield SimpleNamespace(sample_rate=16000, audio=np.zeros(1600))
+
+        engine.model = SimpleNamespace(generate=generate)
+        settings = TTSSettings(voice_style="A gentle young woman", ref_audio="speaker.wav")
+        with patch.object(engine, "load"), TestClient(tts_app(settings, engine)) as client:
+            for emotion in EMOTION_INSTRUCTIONS:
+                response = client.post("/v1/audio/speech", json={"text": "你好！", "emotion": emotion})
+                self.assertEqual(response.status_code, 200, response.text)
+                text, kwargs = calls[-1]
+                self.assertEqual(text, "你好！")
+                self.assertIn(EMOTION_INSTRUCTIONS[emotion], kwargs["instruct"])
+                self.assertIn(settings.voice_style, kwargs["instruct"])
+                self.assertTrue(Path(kwargs["ref_audio"]).is_absolute())
+                self.assertNotIn("voice", kwargs)
+            self.assertEqual(client.post("/v1/audio/speech", json={"text": "Hi", "emotion": "angry"}).status_code, 422)
+
+    def test_optional_instruction_never_turns_none_into_spoken_control_text(self):
+        engine = FakeTTS()
+        with TestClient(tts_app(TTSSettings(), engine)) as client:
+            self.assertEqual(client.post("/v1/audio/speech", json={"text": "Hi"}).status_code, 200)
+            self.assertIsNone(engine.kwargs["instruct"])
+            self.assertEqual(client.post("/v1/audio/speech", json={"text": "Hi", "emotion": "sad", "instruct": "(Quietly)"}).status_code, 200)
+            self.assertIn("Quietly", engine.kwargs["instruct"])
+            self.assertNotIn("(", engine.kwargs["instruct"])
+
     def test_wav_response_metadata_and_reuse(self):
         engine = FakeTTS()
         with TestClient(tts_app(TTSSettings(), engine)) as client:

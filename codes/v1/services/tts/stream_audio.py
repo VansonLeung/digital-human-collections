@@ -27,6 +27,22 @@ class TTSEngine:
         getter = getattr(self.model, "get_supported_languages", None)
         return list(getter()) if getter else []
 
+    @property
+    def emotion_control(self):
+        """Known model capabilities; accepting **kwargs alone proves nothing."""
+        family = type(self.model).__module__.lower()
+        model_id = self.model_id.lower()
+        if "voxcpm2" in family or "voxcpm2" in model_id:
+            return "supported"
+        if "qwen3_tts" in family or "qwen3-tts" in model_id:
+            variant = getattr(getattr(self.model, "config", None), "tts_model_type", None)
+            if variant == "base" or "-base" in model_id or "0.6b" in model_id:
+                return "unsupported"
+            if (variant in ("voice_design", "custom_voice")
+                    or "1.7b-customvoice" in model_id or "voicedesign" in model_id):
+                return "supported"
+        return "unknown"
+
     def iter_pcm(self, text, voice=None, language=None, instruct=None,
                  ref_audio=None, ref_text=None, max_tokens=1024, stream=False):
         if voice and self.voices and voice.lower() not in [v.lower() for v in self.voices]:
