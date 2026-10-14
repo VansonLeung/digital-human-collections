@@ -16,6 +16,7 @@ const envSchema = z.object({
   LLM_STREAM: z.enum(['true', 'false']).default('true'),
   LLM_MAX_TOKENS: z.coerce.number().int().min(128).max(8192).default(1600),
   LLM_THINKING: z.enum(['true', 'false']).default('false'),
+  PROACTIVE_IDLE_SECONDS: z.coerce.number().int().min(1).max(3600).default(60),
   ASR_BASE_URL: z.url().default('http://127.0.0.1:38001'),
   TTS_BASE_URL: z.url().default('http://127.0.0.1:38002'),
   RHUBARB_BIN: z.string().default(path.join(appRoot, 'tools/rhubarb/rhubarb')),

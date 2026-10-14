@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-export const emotionSchema = z.enum(['neutral', 'happy', 'sad', 'surprised', 'thoughtful']);
+export const emotionSchema = z.enum([
+  'neutral',
+  'happy',
+  'sad',
+  'surprised',
+  'thoughtful',
+  'angry',
+]);
 
 export type Emotion = z.infer<typeof emotionSchema>;
 

@@ -23,12 +23,20 @@ import {
   type ReplyLanguage,
   type Persona,
   type ServerEvent,
+  type ReplyDiagnostic,
 } from '@digital-human/shared';
 import type { AvatarRenderer } from './avatars/types';
 import { SpeechQueuePlayer } from './audio/SpeechQueuePlayer';
+import { useReplySuggestion } from './hooks/useReplySuggestion';
+import { useProactiveChat } from './hooks/useProactiveChat';
+import { ReplyDiagnostics } from './components/ReplyDiagnostics';
+import { useSettings } from './hooks/useSettings';
+import { useAutoReply } from './hooks/useAutoReply';
+import { usePhraseDisplay } from './hooks/usePhraseDisplay';
 
 type Message = {
   id: string;
+  turnId?: string;
   role: 'user' | 'assistant';
   text: string;
   interrupted?: boolean;
@@ -46,8 +54,26 @@ const languages: Record<ReplyLanguage, string> = {
 
 export function App() {
   const [personas, setPersonas] = useState<Persona[]>([]);
-  const [personaId, setPersonaId] = useState('constraint-twist');
-  const [language, setLanguage] = useState<ReplyLanguage>('auto');
+  const preferences = useSettings();
+  const {
+    personaId,
+    language,
+    speech,
+    muted,
+    proactiveEnabled,
+    idleSeconds,
+    autoReplyEnabled,
+    autoReplyDelaySeconds,
+    autoReplyMaxTurns,
+    displayMode,
+    textPhraseDelaySeconds,
+  } = preferences.settings;
+  const setPersonaId = (value: string) => preferences.update('personaId', value);
+  const setLanguage = (value: ReplyLanguage) => preferences.update('language', value);
+  const setSpeech = (value: boolean) => preferences.update('speech', value);
+  const setMuted = (value: boolean) => preferences.update('muted', value);
+  const setProactiveEnabled = (value: boolean) => preferences.update('proactiveEnabled', value);
+  const setIdleSeconds = (value: number) => preferences.update('idleSeconds', value);
 
   const [health, setHealth] = useState<Health>();
   const [connected, setConnected] = useState(false);
@@ -57,11 +83,9 @@ export function App() {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [speech, setSpeech] = useState(true);
 
   const [avatarReady, setAvatarReady] = useState(false);
   const [avatarError, setAvatarError] = useState('');
-  const [muted, setMuted] = useState(false);
   const [paused, setPaused] = useState(false);
   const [caption, setCaption] = useState('');
 
@@ -72,12 +96,22 @@ export function App() {
   const [lastSpeech, setLastSpeech] = useState<Speech[]>();
   const [retry, setRetry] = useState(false);
   const [credits, setCredits] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<ReplyDiagnostic>();
+  const [revision, setRevision] = useState(0);
+  const [completedRevision, setCompletedRevision] = useState<number | null>(null);
+  const turnSucceeded = useRef(false);
+  const turnDisplay = useRef<{ id: string; mode: 'full' | 'phrases'; speech: boolean } | undefined>(
+    undefined,
+  );
+  const proactiveTurn = useRef(false);
+  const defaultDelayApplied = useRef(false);
 
   const canvas = useRef<HTMLDivElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const end = useRef<HTMLDivElement>(null);
   const renderer = useRef<AvatarRenderer | undefined>(undefined);
   const socket = useRef<WebSocket | undefined>(undefined);
+  const receiveEvent = useRef<(event: ServerEvent) => void>(() => {});
   const session = useRef('');
   const currentTurn = useRef<string | null>(null);
   const acceptTurn = useRef(false);
@@ -101,6 +135,97 @@ export function App() {
   const persona = personas.find((p) => p.id === personaId);
   const selectedPersona = useRef<Persona | undefined>(undefined);
   selectedPersona.current = persona;
+
+  const suggestion = useReplySuggestion({
+    draft,
+    language,
+    revision,
+    blocked: !connected || busy || recording || transcribing,
+    onDraft: setDraft,
+    onError: (message, details) => {
+      setError(message);
+      setDiagnostic(details);
+    },
+  });
+  const phraseDisplay = usePhraseDisplay((phrase) => {
+    const id = `${phrase.turnId}:phrase:${phrase.phraseIndex}`;
+    setMessages((items) => {
+      if (items.some((item) => item.id === id)) return items;
+      const placeholder = items.find((item) => item.id === phrase.turnId);
+      const personaName = placeholder?.personaName ?? selectedPersona.current?.name;
+      return [
+        ...items.filter((item) => !(item.id === phrase.turnId && !item.text)),
+        { id, turnId: phrase.turnId, role: 'assistant', text: phrase.text, personaName },
+      ];
+    });
+    setCaption(phrase.text);
+  });
+  const autoReply = useAutoReply({
+    enabled: autoReplyEnabled,
+    delaySeconds: autoReplyDelaySeconds,
+    maxTurns: autoReplyMaxTurns,
+    completedRevision,
+    blocked:
+      !connected ||
+      busy ||
+      phraseDisplay.revealing ||
+      paused ||
+      recording ||
+      transcribing ||
+      (suggestion.loading && !suggestion.autoLoading) ||
+      !!suggestion.preview ||
+      !!draft.trim() ||
+      !!error,
+    generateAndSend: async (signal) => {
+      const text = await suggestion.generate(session.current, { signal, automatic: true });
+      if (signal.aborted || !text) return false;
+      return send(text, true);
+    },
+  });
+  const proactive = useProactiveChat({
+    enabled: proactiveEnabled && !autoReplyEnabled,
+    delaySeconds: idleSeconds,
+    blocked:
+      !connected ||
+      busy ||
+      phraseDisplay.revealing ||
+      recording ||
+      transcribing ||
+      paused ||
+      suggestion.loading ||
+      !!suggestion.preview ||
+      !!draft.trim() ||
+      !!error ||
+      !messages.some((message) => message.role === 'assistant' && !!message.text),
+    onFollowUp: sendProactive,
+    onActivity: () => {
+      if (proactiveTurn.current && (state !== 'Speaking' || document.hidden)) stop();
+    },
+  });
+
+  useEffect(() => {
+    if (health?.proactiveIdleSeconds && !defaultDelayApplied.current) {
+      defaultDelayApplied.current = true;
+      if (preferences.saved.idleSeconds === undefined) setIdleSeconds(health.proactiveIdleSeconds);
+    }
+  }, [health?.proactiveIdleSeconds]);
+
+  useEffect(() => {
+    if (connected)
+      command({
+        type: 'proactive.configure',
+        enabled: proactiveEnabled && !autoReplyEnabled,
+        delaySeconds: idleSeconds,
+      });
+  }, [connected, proactiveEnabled, autoReplyEnabled, idleSeconds]);
+
+  useEffect(() => {
+    player.current!.setMuted(muted);
+  }, [muted]);
+  useEffect(() => {
+    if (personas.length && !personas.some((item) => item.id === personaId))
+      setPersonaId(personas[0].id);
+  }, [personas, personaId]);
 
   const refreshHealth = () =>
     fetch('/api/health')
@@ -181,6 +306,8 @@ export function App() {
         renderer.current?.beginPhrase(phrase.performance, phrase.duration);
         setCaption(phrase.text);
         setState('Speaking');
+        if (!replay && turnDisplay.current?.id === turnId && turnDisplay.current.mode === 'phrases')
+          phraseDisplay.phrase({ turnId, phraseIndex: phrase.phraseIndex, text: phrase.text });
         if (!replay && currentTurn.current === turnId)
           command({ type: 'playback.started', turnId });
       },
@@ -193,6 +320,8 @@ export function App() {
         } else if (currentTurn.current === turnId) command({ type: 'playback.ended', turnId });
       },
       failed: (error) => {
+        autoReply.pause();
+        phraseDisplay.stop();
         setError(error.message || 'Playback failed.');
         setLastSpeech(undefined);
         if (replay) {
@@ -213,6 +342,7 @@ export function App() {
   function receive(event: ServerEvent) {
     if (event.seq <= seq.current) return;
     seq.current = event.seq;
+    setRevision(event.revision);
     if (event.type === 'session.ready') {
       setConnected(true);
       setState('Ready');
@@ -224,18 +354,30 @@ export function App() {
       setMessages([]);
       setCaption('');
       setLastSpeech(undefined);
+      setDiagnostic(undefined);
+      proactive.suppress();
+      suggestion.cancel();
+      phraseDisplay.stop();
+      autoReply.pause();
+      setCompletedRevision(null);
       setState('Ready');
       return;
     }
     if (event.type === 'turn.started') {
       if (!acceptTurn.current) return;
       currentTurn.current = event.turnId;
+      turnSucceeded.current = false;
+      turnDisplay.current = { id: event.turnId!, mode: event.displayMode, speech: event.speech };
+      if (event.displayMode === 'phrases')
+        phraseDisplay.begin(event.turnId!, event.speech, textPhraseDelaySeconds);
+      proactiveTurn.current = event.origin === 'proactive';
       acceptTurn.current = false;
       setBusy(true);
       setMessages((m) => [
         ...m,
         {
           id: event.turnId!,
+          turnId: event.turnId!,
           role: 'assistant',
           text: '',
           personaName: selectedPersona.current?.name,
@@ -243,9 +385,22 @@ export function App() {
       ]);
       return;
     }
+    if (event.type === 'proactive.skipped') {
+      if (proactiveTurn.current) {
+        proactiveTurn.current = false;
+        acceptTurn.current = false;
+        setBusy(false);
+        setState('Ready');
+      }
+      return;
+    }
     if (event.type === 'error' && !event.turnId) {
       setError(event.message);
+      autoReply.pause();
+      setDiagnostic(event.diagnostic);
       if (!currentTurn.current) {
+        proactiveTurn.current = false;
+        acceptTurn.current = false;
         setBusy(false);
         setState('Ready');
       }
@@ -257,13 +412,27 @@ export function App() {
         setState(event.state);
         break;
       case 'answer.delta':
+        if (turnDisplay.current?.mode === 'phrases') break;
         setMessages((m) =>
           m.map((v) => (v.id === event.turnId ? { ...v, text: v.text + event.text } : v)),
         );
         break;
       case 'answer.final':
+        turnSucceeded.current = true;
+        if (turnDisplay.current?.mode === 'phrases') {
+          phraseDisplay.finish(event.turnId);
+          break;
+        }
         setMessages((m) => m.map((v) => (v.id === event.turnId ? { ...v, text: event.text } : v)));
         if (queueTurn.current !== event.turnId) setCaption(event.text);
+        break;
+      case 'answer.phrase':
+        if (turnDisplay.current?.mode === 'phrases' && !turnDisplay.current.speech)
+          phraseDisplay.phrase({
+            turnId: event.turnId,
+            phraseIndex: event.phraseIndex,
+            text: event.text,
+          });
         break;
       case 'speech.ready': {
         if (queueTurn.current !== event.turnId) {
@@ -280,20 +449,39 @@ export function App() {
         player.current!.finish(event.phraseCount);
         break;
       case 'error':
+        autoReply.pause();
+        phraseDisplay.stop();
+        turnSucceeded.current = false;
         player.current!.stop();
         setLastSpeech(undefined);
         setError(event.message);
+        setDiagnostic(event.diagnostic);
+        setMessages((items) =>
+          items.map((item) =>
+            item.id === event.turnId && !item.text
+              ? { ...item, text: 'Reply unavailable. See error details below.' }
+              : item,
+          ),
+        );
+        proactive.suppress();
         setRetry(event.retryable);
         break;
       case 'turn.interrupted':
+        autoReply.pause();
+        phraseDisplay.stop();
         player.current!.stop();
-        setMessages((m) => m.map((v) => (v.id === event.turnId ? { ...v, interrupted: true } : v)));
+        setMessages((m) =>
+          m.map((v) => (v.turnId === event.turnId ? { ...v, interrupted: true } : v)),
+        );
         currentTurn.current = null;
+        proactiveTurn.current = false;
         setBusy(false);
         setState('Ready');
         break;
       case 'turn.completed':
+        if (turnSucceeded.current) setCompletedRevision(event.revision);
         currentTurn.current = null;
+        proactiveTurn.current = false;
         setBusy(false);
         setState('Ready');
         void refreshHealth();
@@ -301,8 +489,12 @@ export function App() {
     }
   }
 
+  // Keep event handling current when preferences change within a live session.
+  receiveEvent.current = receive;
+
   async function start() {
     setError('');
+    setDiagnostic(undefined);
     setState('Connecting');
     try {
       await player.current!.unlock();
@@ -318,11 +510,14 @@ export function App() {
       socket.current = ws;
       ws.onmessage = (message) => {
         const parsed = eventSchema.safeParse(JSON.parse(message.data));
-        if (parsed.success) receive(parsed.data);
+        if (parsed.success) receiveEvent.current(parsed.data);
       };
       ws.onclose = () => {
         if (socket.current !== ws) return;
         player.current!.stop();
+        phraseDisplay.stop();
+        autoReply.pause();
+        setCompletedRevision(null);
         currentTurn.current = null;
         setConnected(false);
         setBusy(false);
@@ -335,9 +530,16 @@ export function App() {
     }
   }
 
-  function send(text = draft) {
-    if (!connected || busy || recording || transcribing || !text.trim()) return;
+  function send(text = draft, automated = false) {
+    if (!connected || busy || phraseDisplay.revealing || recording || transcribing || !text.trim())
+      return false;
+    if (!automated) autoReply.restart();
+    phraseDisplay.stop();
     setError('');
+    setDiagnostic(undefined);
+    suggestion.cancel();
+    proactive.arm();
+    proactiveTurn.current = false;
     setRetry(false);
     setReview(false);
     setDraft('');
@@ -350,7 +552,27 @@ export function App() {
     void player.current!.unlock();
     command({
       type: 'turn.send',
+      displayMode,
       text: text.trim(),
+      personaId,
+      language,
+      speech: speech && avatarReady,
+    });
+    return true;
+  }
+
+  function sendProactive() {
+    if (!connected || busy || draft.trim() || recording || transcribing) return;
+    proactiveTurn.current = true;
+    acceptTurn.current = true;
+    setBusy(true);
+    setState('Thinking');
+    setLastSpeech(undefined);
+    setDiagnostic(undefined);
+    command({
+      type: 'turn.proactive',
+      displayMode,
+      revision,
       personaId,
       language,
       speech: speech && avatarReady,
@@ -358,15 +580,21 @@ export function App() {
   }
 
   function stop() {
+    autoReply.pause();
+    phraseDisplay.stop();
+    proactive.suppress();
+    suggestion.cancel();
+    proactiveTurn.current = false;
     player.current!.stop();
     queueTurn.current = null;
     speechPhrases.current = [];
     setLastSpeech(undefined);
     setPaused(false);
     acceptTurn.current = false;
-    const id = currentTurn.current;
+    const id =
+      currentTurn.current ?? (phraseDisplay.revealing ? turnDisplay.current?.id : undefined);
     command({ type: 'turn.stop', ...(id ? { turnId: id } : {}) });
-    if (id) setMessages((m) => m.map((v) => (v.id === id ? { ...v, interrupted: true } : v)));
+    if (id) setMessages((m) => m.map((v) => (v.turnId === id ? { ...v, interrupted: true } : v)));
     currentTurn.current = null;
     setBusy(false);
     setState('Ready');
@@ -381,11 +609,17 @@ export function App() {
     setCaption('');
     setDraft('');
     setError('');
+    setDiagnostic(undefined);
     setReview(false);
     setLastSpeech(undefined);
+    setCompletedRevision(null);
   }
 
   async function record() {
+    autoReply.pause();
+    if (proactiveTurn.current) stop();
+    suggestion.cancel();
+    proactive.touch();
     if (recording) {
       recorder.current?.stop();
       return;
@@ -463,7 +697,7 @@ export function App() {
     } else setError('');
   }
 
-  const disabled = busy || recording || transcribing;
+  const disabled = busy || phraseDisplay.revealing || recording || transcribing;
   return (
     <div className="studio">
       <header className="topbar">
@@ -546,7 +780,13 @@ export function App() {
               >
                 {paused ? <Play size={18} /> : <Pause size={18} />}
               </button>
-              <button aria-label="Stop response" disabled={!busy} onClick={stop}>
+              <button
+                aria-label="Stop response"
+                disabled={
+                  !busy && !phraseDisplay.revealing && !suggestion.loading && !autoReplyEnabled
+                }
+                onClick={stop}
+              >
                 <Square size={15} />
               </button>
             </div>
@@ -668,6 +908,18 @@ export function App() {
               </button>
             </div>
           )}
+          {diagnostic && <ReplyDiagnostics diagnostic={diagnostic} />}
+          {suggestion.preview && (
+            <div className="suggestion-preview">
+              <p>{suggestion.preview}</p>
+              <button type="button" onClick={suggestion.accept}>
+                Use suggested reply
+              </button>
+              <button type="button" onClick={suggestion.cancel}>
+                Dismiss suggestion
+              </button>
+            </div>
+          )}
           {review && (
             <div className="review">
               <Check size={14} />
@@ -705,7 +957,12 @@ export function App() {
             <textarea
               aria-label="Message"
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                if (proactiveTurn.current) stop();
+                suggestion.cancel();
+                proactive.touch();
+                setDraft(e.target.value);
+              }}
               placeholder={
                 recording
                   ? `Listening… ${seconds}s`
@@ -715,7 +972,7 @@ export function App() {
               }
               maxLength={4000}
               rows={1}
-              disabled={!connected || disabled}
+              disabled={!connected || (busy && !proactiveTurn.current) || recording || transcribing}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
@@ -723,6 +980,27 @@ export function App() {
                 }
               }}
             />
+            <button
+              type="button"
+              className="suggest-reply"
+              aria-label="Suggest reply"
+              title="Draft a reply for you to review and send"
+              disabled={
+                !connected ||
+                disabled ||
+                suggestion.loading ||
+                !messages.some((message) => message.role === 'assistant' && !!message.text)
+              }
+              onClick={() => {
+                setError('');
+                setRetry(false);
+                setDiagnostic(undefined);
+                proactive.touch();
+                void suggestion.generate(session.current);
+              }}
+            >
+              {suggestion.loading ? <span className="loader" /> : <Sparkles size={18} />}
+            </button>
             <button
               type="button"
               className={`mic-button ${recording ? 'recording' : ''}`}
@@ -769,6 +1047,152 @@ export function App() {
               Spoken replies
             </label>
           </div>
+          <div className="proactive-options">
+            <label>
+              <input
+                type="checkbox"
+                aria-label="Proactive chat"
+                checked={proactiveEnabled}
+                onChange={(event) => setProactiveEnabled(event.target.checked)}
+              />{' '}
+              Proactive chat
+            </label>
+            <label>
+              After{' '}
+              <input
+                type="number"
+                aria-label="Proactive delay seconds"
+                min={1}
+                max={3600}
+                value={idleSeconds}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isInteger(value) && value >= 1 && value <= 3600) setIdleSeconds(value);
+                }}
+              />{' '}
+              seconds
+            </label>
+          </div>
+          <div className="auto-reply-options">
+            <label>
+              <input
+                type="checkbox"
+                aria-label="Auto-LLM-suggest-and-reply"
+                checked={autoReplyEnabled}
+                onChange={(event) => {
+                  preferences.update('autoReplyEnabled', event.target.checked);
+                  if (event.target.checked) autoReply.resume();
+                  else autoReply.pause();
+                }}
+              />
+              Auto-LLM-suggest-and-reply
+            </label>
+            {autoReplyEnabled && (
+              <span>
+                {autoReply.sent}/{autoReplyMaxTurns} sent ·{' '}
+                {autoReply.paused
+                  ? 'paused'
+                  : autoReply.sent >= autoReplyMaxTurns
+                    ? 'limit reached'
+                    : autoReply.pending
+                      ? 'drafting'
+                      : busy || phraseDisplay.revealing
+                        ? 'waiting for Mira'
+                        : 'waiting'}
+              </span>
+            )}
+            {autoReplyEnabled && (autoReply.paused || autoReply.sent >= autoReplyMaxTurns) && (
+              <button
+                type="button"
+                disabled={disabled || !!draft.trim() || !!error || completedRevision === null}
+                onClick={autoReply.resume}
+              >
+                Resume auto replies
+              </button>
+            )}
+          </div>
+          <details className="conversation-settings">
+            <summary>Conversation settings</summary>
+            <div className="settings-fields">
+              <label>
+                Auto reply delay (seconds)
+                <input
+                  type="number"
+                  aria-label="Auto reply delay seconds"
+                  min={1}
+                  max={600}
+                  step={0.5}
+                  value={autoReplyDelaySeconds}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (value >= 1 && value <= 600)
+                      preferences.update('autoReplyDelaySeconds', value);
+                  }}
+                />
+              </label>
+              <label>
+                Auto reply turn limit
+                <input
+                  type="number"
+                  aria-label="Auto reply turn limit"
+                  min={1}
+                  max={100}
+                  value={autoReplyMaxTurns}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (Number.isInteger(value) && value >= 1 && value <= 100)
+                      preferences.update('autoReplyMaxTurns', value);
+                  }}
+                />
+              </label>
+              <label>
+                Mira's messages
+                <select
+                  aria-label="Mira message display"
+                  value={displayMode}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    preferences.update('displayMode', event.target.value as 'full' | 'phrases')
+                  }
+                >
+                  <option value="full">Full reply</option>
+                  <option value="phrases">Phrase bubbles · follow speech</option>
+                </select>
+              </label>
+              <label>
+                Text-only phrase delay (seconds)
+                <input
+                  type="number"
+                  aria-label="Text-only phrase delay seconds"
+                  min={0.2}
+                  max={10}
+                  step={0.1}
+                  value={textPhraseDelaySeconds}
+                  disabled={disabled}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (value >= 0.2 && value <= 10)
+                      preferences.update('textPhraseDelaySeconds', value);
+                  }}
+                />
+              </label>
+            </div>
+            <p>
+              Settings are remembered in this browser. Auto replies wait for Mira to finish; typing,
+              Stop, errors, or leaving the tab pauses them. Proactive chat waits while auto replies
+              are enabled.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                stop();
+                preferences.reset();
+                setCompletedRevision(null);
+              }}
+            >
+              Reset settings
+            </button>
+          </details>
         </section>
       </main>
       <footer className="footer">

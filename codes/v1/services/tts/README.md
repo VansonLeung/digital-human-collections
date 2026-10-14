@@ -49,7 +49,7 @@ JSON fields:
 | `voice` | Optional; defaults to `TTS_VOICE`. Supported voices are listed by `/health`. |
 | `language` | Optional; defaults to `TTS_LANGUAGE=auto`. Use model values such as `english` and `chinese`; inspect `/health`. |
 | `instruct` | Optional voice style instruction for models that support it. |
-| `emotion` | Optional `neutral`, `happy`, `sad`, `surprised`, or `thoughtful`. Converted to a delivery instruction and combined with `TTS_VOICE_STYLE` and `instruct`. |
+| `emotion` | Optional `neutral`, `happy`, `sad`, `surprised`, `thoughtful`, or `angry`. Converted to a delivery instruction and combined with `TTS_VOICE_STYLE` and `instruct`. |
 
 The chatbot sends the same phrase emotion to both TTS and the avatar. The LLM
 must choose an emotion before its first sentence; later tags can change it.

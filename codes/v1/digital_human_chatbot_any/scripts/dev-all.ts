@@ -1,49 +1,58 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import path from 'node:path';
-import os from 'node:os';
 import { readConfig, appRoot } from '../backend/src/config.js';
+import { SpeechServiceLauncher } from './services/launcher.js';
 
-const config = readConfig();
-const children: ChildProcess[] = [];
-
-const python =
-  process.env.PYTHON_BIN || path.join(os.homedir(), '.common-venv/python3.12/bin/python');
-
-function launch(command: string, args: string[], cwd: string) {
-  const child = spawn(command, args, { cwd, stdio: 'inherit', env: process.env });
-  children.push(child);
-  child.on('error', () => {
-    console.error(`Unable to launch ${path.basename(command)}. Check PYTHON_BIN and setup.`);
-    stop();
-  });
-  child.on('exit', (code) => {
-    if (code && code !== 0) stop();
-  });
-}
-
+let dev: ChildProcess | undefined;
 let stopping = false;
+const services = new SpeechServiceLauncher(readConfig(), {}, (error) => {
+  console.error(error.message);
+  process.exitCode = 1;
+  void stop();
+});
 
-function stop() {
+async function stop() {
   if (stopping) return;
   stopping = true;
-  for (const child of children) child.kill('SIGTERM');
-}
-
-for (const [name, url, entry] of [
-  ['asr', config.ASR_BASE_URL, 'asr_api.py'],
-  ['tts', config.TTS_BASE_URL, 'tts_api.py'],
-]) {
-  try {
-    const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(1500) });
-    if (!response.ok) throw new Error();
-    console.log(`${name.toUpperCase()} is already running; reusing it.`);
-  } catch {
-    launch(python, [entry], path.resolve(appRoot, '../services', name));
+  if (dev?.pid && dev.exitCode === null && dev.signalCode === null) {
+    if (process.platform === 'win32') dev.kill('SIGTERM');
+    else {
+      // npm/concurrently/watchers are all in the process group we created.
+      try {
+        process.kill(-dev.pid, 'SIGTERM');
+      } catch {
+        /* Already exited. */
+      }
+    }
   }
+  await services.stop();
 }
 
-launch(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'dev'], appRoot);
+process.on('SIGINT', () => void stop());
+process.on('SIGTERM', () => void stop());
 
-process.on('SIGINT', stop);
-
-process.on('SIGTERM', stop);
+try {
+  await services.start();
+  if (!stopping) {
+    dev = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'dev'], {
+      cwd: appRoot,
+      stdio: 'inherit',
+      env: process.env,
+      detached: process.platform !== 'win32',
+    });
+    dev.once('error', (error) => {
+      console.error(`Unable to launch npm: ${error.message}`);
+      process.exitCode = 1;
+      void stop();
+    });
+    dev.once('exit', (code) => {
+      if (!stopping) process.exitCode = code ?? 1;
+      void stop();
+    });
+  }
+} catch (error) {
+  if (!stopping) {
+    console.error((error as Error).message);
+    process.exitCode = 1;
+  }
+  await stop();
+}

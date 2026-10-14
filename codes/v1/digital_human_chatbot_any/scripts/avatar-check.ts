@@ -32,7 +32,15 @@ server.middlewares.use((req, res, next) => {
 
 await server.listen();
 
-const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const browser = await chromium.launch({
+  channel: 'chrome',
+  headless: true,
+  args: [
+    '--disable-background-timer-throttling',
+    '--disable-renderer-backgrounding',
+    '--disable-backgrounding-occluded-windows',
+  ],
+});
 
 try {
   const page = await browser.newPage({ viewport: { width: 800, height: 900 } });
@@ -55,10 +63,58 @@ try {
         // stationary, and return both hands to their captured rest rotations.
         const bone = (name: string) => renderer.vrm.humanoid.getNormalizedBoneNode(name);
         const rotation = (name: string) => bone(name).rotation.toArray().slice(0, 3);
-        const happyBind = renderer.vrm.expressionManager
-          .getExpression('happy')
-          .binds.find((bind: any) => bind.primitives);
-        const smile = () => happyBind.primitives[0].morphTargetInfluences[happyBind.index];
+        const manager = renderer.vrm.expressionManager;
+        const smile = () => manager.getValue('talk-happy');
+        // Probe actual deformed vertices, not just the aa control weight: a
+        // whole-face emotion can hold the lips open even when aa is zero.
+        const meshes = new Set<any>();
+        for (const name of ['happy', 'sad', 'surprised', 'relaxed', 'angry'])
+          for (const bind of manager.getExpression(name)?.binds ?? [])
+            for (const mesh of bind.primitives ?? []) meshes.add(mesh);
+        const probes = [...meshes].map((mesh) => {
+          const geometry = mesh.geometry;
+          const base = geometry.getAttribute('position');
+          let mouthTop = -Infinity;
+          for (const name of ['aa', 'ih', 'ee', 'oh', 'ou'])
+            for (const bind of manager.getExpression(name)?.binds ?? []) {
+              if (!bind.primitives?.includes(mesh)) continue;
+              const morph = geometry.morphAttributes.position[bind.index];
+              for (let vertex = 0; vertex < base.count; vertex++) {
+                const delta = ['X', 'Y', 'Z'].map(
+                  (axis) =>
+                    morph[`get${axis}`](vertex) -
+                    (geometry.morphTargetsRelative ? 0 : base[`get${axis}`](vertex)),
+                );
+                if (delta.reduce((sum, value) => sum + value * value, 0) > 1e-12)
+                  mouthTop = Math.max(mouthTop, base.getY(vertex));
+              }
+            }
+          return { mesh, base, mouthTop };
+        });
+        (window as any).measureFace = () => {
+          let lowerFace = 0;
+          let upperFace = 0;
+          for (const { mesh, base, mouthTop } of probes) {
+            const morphs = mesh.geometry.morphAttributes.position;
+            for (let vertex = 0; vertex < base.count; vertex++) {
+              const delta = [0, 0, 0];
+              for (let index = 0; index < morphs.length; index++) {
+                const weight = mesh.morphTargetInfluences[index] ?? 0;
+                if (Math.abs(weight) < 1e-7) continue;
+                for (const [component, axis] of ['X', 'Y', 'Z'].entries())
+                  delta[component] +=
+                    weight *
+                    (morphs[index][`get${axis}`](vertex) -
+                      (mesh.geometry.morphTargetsRelative ? 0 : base[`get${axis}`](vertex)));
+              }
+              const displacement = Math.hypot(...delta);
+              if (base.getY(vertex) <= mouthTop + 1e-4)
+                lowerFace = Math.max(lowerFace, displacement);
+              else upperFace = Math.max(upperFace, displacement);
+            }
+          }
+          return { lowerFace, upperFace };
+        };
         const rest = {
           left: rotation('leftUpperArm'),
           right: rotation('rightUpperArm'),
@@ -102,7 +158,14 @@ try {
     assert.ok(result.talking.smile > 0.1);
     assert.deepEqual(result.talking.root, result.rest.root);
     await page.screenshot({ path: path.join(qa, `gestures-${id}.png`) });
-    for (const emotion of ['happy', 'sad', 'surprised', 'thoughtful', 'neutral'] as const) {
+    for (const emotion of [
+      'happy',
+      'sad',
+      'surprised',
+      'thoughtful',
+      'angry',
+      'neutral',
+    ] as const) {
       const face = await page.evaluate(async (emotion) => {
         const renderer = (window as any).checkedAvatar;
         renderer.beginPhrase({ emotion, gestures: [] }, 6);
@@ -112,7 +175,9 @@ try {
         await new Promise((resolve) => setTimeout(resolve, emotion === 'surprised' ? 2800 : 900));
         const manager = renderer.vrm.expressionManager;
         const morph = (name: string) => {
-          const bind = manager.getExpression(name)?.binds.find((bind: any) => bind.primitives);
+          const bind =
+            manager.getExpression(`talk-${name}`)?.binds.find((bind: any) => bind.primitives) ??
+            manager.getExpression(name)?.binds.find((bind: any) => bind.primitives);
           return bind ? bind.primitives[0].morphTargetInfluences[bind.index] : 0;
         };
         return {
@@ -120,11 +185,13 @@ try {
           sad: morph('sad'),
           surprised: morph('surprised'),
           relaxed: morph('relaxed'),
+          angry: morph('angry'),
           mouth: morph('aa'),
+          deformation: (window as any).measureFace(),
           texture: manager.getValue(
             `talk-texture-${emotion === 'thoughtful' ? 'relaxed' : emotion}`,
           ),
-          textureWeights: ['happy', 'sad', 'surprised', 'relaxed'].map(
+          textureWeights: ['happy', 'sad', 'surprised', 'relaxed', 'angry'].map(
             (name) => manager.getValue(`talk-texture-${name}`) ?? 0,
           ),
         };
@@ -139,14 +206,51 @@ try {
           assert.equal(face.texture, 1, `${emotion} must select the matching facial texture`);
       } else {
         assert.ok(
-          ['happy', 'sad', 'surprised', 'relaxed'].every(
+          ['happy', 'sad', 'surprised', 'relaxed', 'angry'].every(
             (name) => (face[name as keyof typeof face] as number) < 0.03,
           ),
         );
         assert.ok(face.textureWeights.every((weight: number) => weight === 0));
       }
       assert.ok(face.mouth > 0.4, `${id} ${emotion} must preserve speech mouth motion`);
+      assert.ok(face.deformation.lowerFace > 0.001, `${id} audio must actually open the mouth`);
       await page.screenshot({ path: path.join(qa, `emotion-${id}-${emotion}.png`) });
+      const closed = await page.evaluate(async () => {
+        const renderer = (window as any).checkedAvatar;
+        renderer.setMouthOpening(0);
+        // Wait for rendered animation frames, not a wall-clock delay that can
+        // expire while another Chrome check has backgrounded this page.
+        await new Promise<void>((resolve) => {
+          const started = performance.now();
+          const settled = () => {
+            if (
+              (renderer.vrm.expressionManager.getValue('aa') ?? 0) < 1e-5 ||
+              performance.now() - started > 5000
+            )
+              resolve();
+            else requestAnimationFrame(settled);
+          };
+          requestAnimationFrame(settled);
+        });
+        const amplitude = (window as any).measureFace();
+        renderer.setMouth('X');
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return { amplitude, phonetic: (window as any).measureFace() };
+      });
+      assert.ok(
+        closed.amplitude.lowerFace < 1e-5,
+        `${id} ${emotion} holds the mouth open during silence: ${JSON.stringify(closed)}`,
+      );
+      assert.ok(
+        closed.phonetic.lowerFace < 1e-5,
+        `${id} ${emotion} must close for phonetic rest too`,
+      );
+      if (emotion !== 'neutral')
+        assert.ok(
+          closed.amplitude.upperFace > 1e-4,
+          `${id} ${emotion} should retain eye/brow expression with closed lips`,
+        );
+      await page.screenshot({ path: path.join(qa, `emotion-closed-${id}-${emotion}.png`) });
     }
     const settled = await page.evaluate(async () => {
       const renderer = (window as any).checkedAvatar;
@@ -162,9 +266,6 @@ try {
       renderer.setSpeaking(false);
       renderer.setMouth('X');
       await new Promise((resolve) => setTimeout(resolve, 2200));
-      const bind = renderer.vrm.expressionManager
-        .getExpression('happy')
-        .binds.find((bind: any) => bind.primitives);
       const result = {
         left: renderer.vrm.humanoid
           .getNormalizedBoneNode('leftUpperArm')
@@ -174,7 +275,7 @@ try {
           .getNormalizedBoneNode('rightUpperArm')
           .rotation.toArray()
           .slice(0, 3),
-        smile: bind.primitives[0].morphTargetInfluences[bind.index],
+        smile: renderer.vrm.expressionManager.getValue('talk-happy'),
         heldHead,
         stillHead,
         finishedHead,
@@ -202,9 +303,11 @@ try {
           'root stays fixed',
           'restored resting pose',
           'gesture follows audio time',
-          'happy/sad/surprised/thoughtful/neutral faces',
+          'happy/sad/surprised/thoughtful/angry/neutral faces',
           'sustained surprise and speech mouth',
           'binary facial texture selection',
+          'mouth closes under every active emotion',
+          'eyes/brows remain expressive during silence',
         ],
       }),
     );

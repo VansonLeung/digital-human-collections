@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { EventPayload, ServerEvent, Language } from '@digital-human/shared';
+import type { EventPayload, ServerEvent, Language, ReplyDiagnostic } from '@digital-human/shared';
 import type { ChatMessage } from './services/llm.js';
 
 export type ActiveTurn = {
@@ -9,6 +9,7 @@ export type ActiveTurn = {
   mediaIds?: Set<string>;
   playbackStarted?: boolean;
   speechFinished?: boolean;
+  origin?: 'user' | 'proactive';
 };
 
 export class Session {
@@ -20,6 +21,10 @@ export class Session {
   connection?: object;
   transcription?: AbortController;
   language: Language = 'en';
+  revision = 0;
+  suggestion?: AbortController;
+  diagnostics: ReplyDiagnostic[] = [];
+  proactive = { enabled: false, delaySeconds: 60, eligible: false, lastActivity: Date.now() };
 
   constructor(private emit: (event: ServerEvent) => void = () => {}) {}
 
@@ -30,7 +35,13 @@ export class Session {
 
   send(payload: EventPayload, turnId: string | null = this.active?.id ?? null) {
     this.touched = Date.now();
-    this.emit({ ...payload, sessionId: this.id, turnId, seq: ++this.seq } as ServerEvent);
+    this.emit({
+      ...payload,
+      sessionId: this.id,
+      turnId,
+      seq: ++this.seq,
+      revision: this.revision,
+    } as ServerEvent);
   }
 
   valid(turn: ActiveTurn) {
@@ -41,10 +52,19 @@ export class Session {
     if (this.active !== turn) return;
     clearTimeout(turn.timeout);
     this.active = undefined;
+    this.proactive.lastActivity = Date.now();
     this.send({ type: 'turn.completed' }, turn.id);
   }
 
+  activity() {
+    this.proactive.lastActivity = Date.now();
+    this.suggestion?.abort();
+    if (this.active?.origin === 'proactive') this.stop();
+  }
+
   stop() {
+    this.suggestion?.abort();
+    this.proactive.eligible = false;
     const turn = this.active;
     if (!turn) return;
     this.active = undefined;
@@ -58,6 +78,8 @@ export class Session {
     const turn = this.stop();
     this.transcription?.abort();
     this.history = [];
+    this.revision++;
+    this.diagnostics = [];
     this.language = 'en';
     this.send({ type: 'session.reset' }, null);
     return turn;

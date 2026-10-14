@@ -139,6 +139,41 @@ Neither HTTP service produces mouth cues. The default `LIPSYNC_PROVIDER=amplitud
 
 ## Launch and verification
 
+From the app directory, start both Python speech workers in one foreground command:
+
+```bash
+npm run start:services
+```
+
+The launcher reads the app's ASR/TTS base URLs and each worker's `.env`.
+Python selection is `PYTHON_BIN`, then environment `PYTHON_BASE`, then that
+service's `.env` `PYTHON_BASE`, then `~/.common-venv/python3.12/bin/python`.
+Home-directory paths beginning with `~/` are expanded. The worker directory is
+its working directory, and logs appear directly in the terminal.
+
+Local workers bind to the host/port in the app URL, overriding `ASR_HOST`/
+`ASR_PORT` or `TTS_HOST`/`TTS_PORT` only in the child's environment; files and model
+settings are preserved. Ready services, including busy workers, are reused.
+An occupied port without ready health is reported rather than starting a second
+model process. Unavailable remote or proxy endpoints must be started separately.
+
+Both workers must report `status: "ready"` before startup succeeds. Model loading
+can take time; `SERVICE_START_TIMEOUT_SECONDS` defaults to 300. Startup failure
+or unexpected worker exit stops the other newly launched worker and exits with
+an error. Ctrl+C/SIGTERM stops only workers launched by this command; existing
+services stay running. If both are already ready, the command reports readiness
+and exits. `npm run dev:all` uses the same supervisor, waits for speech readiness,
+then launches the app frontend/backend.
+
+Inspect launch configuration without starting or downloading models:
+
+```bash
+npm run start:services -- --dry-run
+npm run start:services -- --help
+# Override the Python interpreter or allow more startup time:
+PYTHON_BIN=/path/to/python SERVICE_START_TIMEOUT_SECONDS=600 npm run start:services
+```
+
 Start the speech services in separate terminals using their documented Python environments:
 
 ```bash

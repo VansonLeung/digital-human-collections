@@ -16,7 +16,9 @@ export type RigBone =
 
 export type PerformancePose = {
   bones: Partial<Record<RigBone, Rotation>>;
-  expressions: Partial<Record<'happy' | 'sad' | 'surprised' | 'relaxed' | 'blink', number>>;
+  expressions: Partial<
+    Record<'happy' | 'sad' | 'surprised' | 'relaxed' | 'angry' | 'blink', number>
+  >;
 };
 
 export const rotation = (x = 0, y = 0, z = 0): Rotation => ({ x, y, z });

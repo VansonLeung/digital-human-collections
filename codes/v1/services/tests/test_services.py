@@ -176,7 +176,7 @@ class TTSAPITests(unittest.TestCase):
                 self.assertIn(settings.voice_style, kwargs["instruct"])
                 self.assertTrue(Path(kwargs["ref_audio"]).is_absolute())
                 self.assertNotIn("voice", kwargs)
-            self.assertEqual(client.post("/v1/audio/speech", json={"text": "Hi", "emotion": "angry"}).status_code, 422)
+            self.assertEqual(client.post("/v1/audio/speech", json={"text": "Hi", "emotion": "furious"}).status_code, 422)
 
     def test_optional_instruction_never_turns_none_into_spoken_control_text(self):
         engine = FakeTTS()

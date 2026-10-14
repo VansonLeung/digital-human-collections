@@ -47,7 +47,12 @@ server.on('upgrade', (request, socket, head) => {
       try {
         const command = commandSchema.parse(JSON.parse(raw.toString()));
         session.touched = Date.now();
-        if (command.type === 'turn.send') {
+        if (command.type === 'conversation.activity') session.activity();
+        else if (command.type === 'proactive.configure') {
+          session.activity();
+          session.proactive.enabled = command.enabled;
+          session.proactive.delaySeconds = command.delaySeconds;
+        } else if (command.type === 'turn.send' || command.type === 'turn.proactive') {
           if (session.transcription) {
             session.send({
               type: 'error',
@@ -105,6 +110,7 @@ server.on('upgrade', (request, socket, head) => {
       if (session.connection === ws) {
         session.stop();
         session.transcription?.abort();
+        session.suggestion?.abort();
         session.connection = undefined;
         session.attach(() => {});
       }

@@ -9,7 +9,7 @@ export class PerformanceController {
   private phrase?: PhrasePerformance;
   private duration = 0;
   private elapsed = 0;
-  private expressionWeights = { happy: 0, sad: 0, surprised: 0, relaxed: 0 };
+  private expressionWeights = { happy: 0, sad: 0, surprised: 0, relaxed: 0, angry: 0 };
 
   setSpeaking(speaking: boolean) {
     this.idle.speaking = speaking;
@@ -50,6 +50,7 @@ export class PerformanceController {
         sad: motion.sad,
         surprised: motion.surprised,
         relaxed: motion.relaxed,
+        angry: motion.angry,
         blink: phase > 4.35 ? Math.sin(((phase - 4.35) / 0.25) * Math.PI) : 0,
       },
     };
@@ -75,7 +76,7 @@ export class PerformanceController {
         gesturePose(gesture, this.elapsed, this.duration, this.idle.level),
       ) ?? [];
     const result = composePose(base, ...gestures);
-    for (const name of ['happy', 'sad', 'surprised', 'relaxed'] as const) {
+    for (const name of ['happy', 'sad', 'surprised', 'relaxed', 'angry'] as const) {
       this.expressionWeights[name] +=
         ((result.expressions[name] ?? 0) - this.expressionWeights[name]) *
         (1 - Math.exp(-Math.min(dt, 0.1) * 10));

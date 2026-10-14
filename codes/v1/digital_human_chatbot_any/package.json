@@ -21,6 +21,7 @@
     "test": "npm run build -w @digital-human/shared && tsx --test backend/tests/*.test.ts",
     "check": "npm run build -w @digital-human/shared && tsc --noEmit -p backend && tsc --noEmit -p frontend",
     "check:services": "tsx scripts/check-services.ts",
+    "start:services": "tsx scripts/start-services.ts",
     "benchmark": "tsx scripts/benchmark.ts",
     "test:browser": "tsx scripts/browser-check.ts",
     "test:playback": "tsx scripts/playback-check.ts",

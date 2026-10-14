@@ -1,15 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import type { Command, Persona, MouthCue } from '@digital-human/shared';
+import type { Command, Persona, MouthCue, LlmRequestBody } from '@digital-human/shared';
 import type { Config } from './config.js';
 import type { Session, ActiveTurn } from './sessions.js';
 import type { MediaStore } from './media.js';
-import { answer } from './services/llm.js';
+import { answer, EmptyCompletionError } from './services/llm.js';
 import { synthesize } from './services/tts.js';
 import { mouthCues } from './services/lipsync.js';
 import { UpstreamError } from './services/http.js';
 import { resolveLanguage } from './services/language.js';
-import { TaggedReplyParser } from './llm/taggedReplyParser.js';
+import { JsonReplyParser, ReplyFormatError } from './llm/JsonReplyParser.js';
 import { PhraseQueue } from './speech/phraseQueue.js';
+import { saveReplyDiagnostic } from './llm/diagnostics.js';
 
 export type Services = {
   answer: typeof answer;
@@ -22,11 +23,27 @@ export const services: Services = { answer, synthesize, mouthCues };
 export async function runTurn(
   config: Config,
   session: Session,
-  command: Extract<Command, { type: 'turn.send' }>,
+  command: Extract<Command, { type: 'turn.send' | 'turn.proactive' }>,
   personas: Persona[],
   media: MediaStore,
   adapters: Services = services,
 ) {
+  const proactive = command.type === 'turn.proactive';
+  if (
+    proactive &&
+    (!session.proactive.enabled ||
+      !session.proactive.eligible ||
+      session.active ||
+      session.suggestion ||
+      session.transcription ||
+      command.revision !== session.revision ||
+      Date.now() - session.proactive.lastActivity < session.proactive.delaySeconds * 1000 ||
+      !session.history.some((message) => message.role === 'assistant'))
+  ) {
+    session.send({ type: 'proactive.skipped' }, null);
+    return;
+  }
+  if (!proactive && session.active?.origin === 'proactive') session.stop();
   if (session.active) {
     session.send({
       type: 'error',
@@ -51,15 +68,40 @@ export async function runTurn(
     id: randomUUID(),
     controller: new AbortController(),
     mediaIds: new Set(),
+    origin: proactive ? 'proactive' : 'user',
   };
+  session.suggestion?.abort();
+  if (proactive) session.proactive.eligible = false;
+  else {
+    session.revision++;
+    session.proactive.eligible = true;
+    session.proactive.lastActivity = Date.now();
+  }
   session.active = turn;
-  session.send({ type: 'turn.started', text: command.text });
+  session.send({
+    type: 'turn.started',
+    displayMode: command.displayMode ?? 'full',
+    speech: command.speech,
+    text: proactive ? '' : command.text,
+    origin: proactive ? 'proactive' : 'user',
+  });
 
   const current = () => session.valid(turn);
-  const language = resolveLanguage(command.text, command.language, session.language);
+  const language = resolveLanguage(
+    proactive ? '' : command.text,
+    command.language,
+    session.language,
+  );
   let stage = 'LLM';
   let speechFailureStage = 'TTS';
   let audioDuration = 0;
+  let rawOutput = '';
+  let requestBody: LlmRequestBody | null = null;
+  let outputComplete = false;
+  let truncated = false;
+  let finishReason: string | null = null;
+  let parserFailure: unknown;
+  let parsedPhrases = 0;
 
   const removeMedia = () => Promise.all([...turn.mediaIds!].map((id) => media.remove(id)));
   turn.controller.signal.addEventListener(
@@ -143,18 +185,22 @@ export async function runTurn(
     }
   }, turn.controller.signal);
 
-  const parser = new TaggedReplyParser(
+  const parser = new JsonReplyParser(
     (text) => {
       if (current()) session.send({ type: 'answer.delta', text });
     },
     (phrase) => {
-      if (command.speech && current()) queue.push(phrase);
+      if (!current()) return;
+      session.send({ type: 'answer.phrase', phraseIndex: parsedPhrases++, text: phrase.text });
+      if (command.speech) queue.push(phrase);
     },
   );
 
   try {
     session.send({ type: 'state.changed', state: 'Thinking' });
-    const history = [...session.history, { role: 'user' as const, content: command.text }];
+    const history = proactive
+      ? [...session.history]
+      : [...session.history, { role: 'user' as const, content: command.text }];
     let receivedDelta = false;
     const raw = await adapters.answer(
       config,
@@ -163,17 +209,42 @@ export async function runTurn(
       (delta) => {
         if (!current()) return;
         receivedDelta = true;
-        parser.write(delta);
+        truncated ||= rawOutput.length + delta.length > 16000;
+        rawOutput = (rawOutput + delta).slice(0, 16000);
+        if (!parserFailure) {
+          try {
+            parser.write(delta);
+          } catch (error) {
+            parserFailure = error;
+          }
+        }
       },
       turn.controller.signal,
+      {
+        proactive,
+        conversationalPhrases: command.displayMode === 'phrases',
+        onFinishReason: (reason) => {
+          finishReason = reason;
+        },
+        onRequestBody: (body) => {
+          requestBody = body;
+        },
+      },
     );
 
     if (!current()) return;
-    if (!receivedDelta) parser.write(raw);
+    outputComplete = true;
+    if (!receivedDelta) {
+      truncated = raw.length > 16000;
+      rawOutput = raw.slice(0, 16000);
+      parser.write(raw);
+    }
+    if (parserFailure) throw parserFailure;
     const text = parser.finish();
     if (!text) throw new Error('LLM returned no spoken answer');
 
     session.history = [...history, { role: 'assistant' as const, content: text }].slice(-12);
+    if (proactive) session.revision++;
     session.language = language;
     session.send({ type: 'answer.final', text });
 
@@ -193,19 +264,39 @@ export async function runTurn(
     await removeMedia();
     if (!current()) return;
     const failedStage = stage === 'speech' ? speechFailureStage : stage;
+    const diagnostic =
+      failedStage === 'LLM'
+        ? await saveReplyDiagnostic(config, session, {
+            turnId: turn.id,
+            rawOutput,
+            requestBody,
+            outputComplete: outputComplete || error instanceof EmptyCompletionError,
+            truncated,
+            finishReason,
+            reason: error instanceof Error ? error.message : 'Reply parsing failed',
+            parser: {
+              ...parser.snapshot(),
+              ...(error instanceof ReplyFormatError ? error.details : {}),
+            },
+          })
+        : undefined;
+    if (!current()) return;
     const message =
-      error instanceof UpstreamError
+      error instanceof ReplyFormatError || error instanceof EmptyCompletionError
         ? error.message
-        : failedStage === 'lip sync'
-          ? 'Mouth animation failed. Check Rhubarb setup; the answer remains available.'
-          : failedStage === 'TTS' && language === 'yue' && config.CANTONESE_TTS_ENABLED !== 'true'
-            ? 'Cantonese voice is awaiting validation. Turn off spoken replies to continue in Cantonese text.'
-            : `${failedStage} is unavailable or timed out. Check service readiness and backend configuration.`;
+        : error instanceof UpstreamError
+          ? error.message
+          : failedStage === 'lip sync'
+            ? 'Mouth animation failed. Check Rhubarb setup; the answer remains available.'
+            : failedStage === 'TTS' && language === 'yue' && config.CANTONESE_TTS_ENABLED !== 'true'
+              ? 'Cantonese voice is awaiting validation. Turn off spoken replies to continue in Cantonese text.'
+              : `${failedStage} is unavailable or timed out. Check service readiness and backend configuration.`;
     session.send({
       type: 'error',
       stage: failedStage,
       message,
       retryable: !(error instanceof UpstreamError) || ![401, 403, 413, 422].includes(error.status),
+      diagnostic,
     });
     session.finish(turn);
     turn.controller.abort();

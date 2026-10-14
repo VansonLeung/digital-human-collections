@@ -1,9 +1,22 @@
-import type { Language } from '@digital-human/shared';
+import type { Language, LlmRequestBody } from '@digital-human/shared';
 import type { Config } from '../config.js';
 import { request, stageSignal, readLimited } from './http.js';
-import { systemPrompt } from '../llm/prompts.js';
+import {
+  buildReplyMessages,
+  type ChatMessage,
+  type CompletionMessage,
+} from '../llm/requestMessages.js';
 
-export type ChatMessage = { role: 'user' | 'assistant'; content: string };
+export type { ChatMessage } from '../llm/requestMessages.js';
+
+export class EmptyCompletionError extends Error {
+  constructor() {
+    super(
+      'LLM returned an empty reply. The provider finished without generating visible text. Please try again.',
+    );
+    this.name = 'EmptyCompletionError';
+  }
+}
 
 export function completionUrl(base: string) {
   const url = new URL(base);
@@ -13,6 +26,7 @@ export function completionUrl(base: string) {
 
 export async function* parseCompletionStream(
   body: ReadableStream<Uint8Array>,
+  onFinishReason?: (reason: string) => void,
 ): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -24,6 +38,8 @@ export async function* parseCompletionStream(
     if (!payload || payload === '[DONE]') return { done: payload === '[DONE]', text: '' };
     const chunk = JSON.parse(payload);
     if (chunk.error) throw new Error('Provider stream failed');
+    const finishReason = chunk.choices?.[0]?.finish_reason;
+    if (typeof finishReason === 'string') onFinishReason?.(finishReason);
     const content = chunk.choices?.[0]?.delta?.content;
     return { done: false, text: typeof content === 'string' ? content : '' };
   }
@@ -54,14 +70,29 @@ export async function* parseCompletionStream(
   }
 }
 
-export async function answer(
+export async function complete(
   config: Config,
-  history: ChatMessage[],
-  language: Language,
+  messages: CompletionMessage[],
   onDelta: (text: string) => void,
   parent: AbortSignal,
+  callbacks: {
+    onFinishReason?: (reason: string) => void;
+    onRequestBody?: (body: LlmRequestBody) => void;
+  } = {},
 ) {
   if (!config.LLM_MODEL_NAME) throw new Error('LLM_MODEL_NAME is not configured');
+  const body = JSON.stringify({
+    model: config.LLM_MODEL_NAME,
+    messages,
+    stream: config.LLM_STREAM === 'true',
+    max_tokens: config.LLM_MAX_TOKENS,
+    ...(config.LLM_THINKING === 'false'
+      ? { chat_template_kwargs: { enable_thinking: false } }
+      : {}),
+  });
+  // Capture a detached snapshot of the exact serialized body before any HTTP
+  // failure. Request headers, credentials and endpoint configuration are excluded.
+  callbacks.onRequestBody?.(JSON.parse(body));
   const response = await request(
     completionUrl(config.LLM_BASE_URL),
     {
@@ -70,21 +101,7 @@ export async function answer(
         'Content-Type': 'application/json',
         ...(config.LLM_API_KEY ? { Authorization: `Bearer ${config.LLM_API_KEY}` } : {}),
       },
-      body: JSON.stringify({
-        model: config.LLM_MODEL_NAME,
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt(language),
-          },
-          ...history.slice(-12),
-        ],
-        stream: config.LLM_STREAM === 'true',
-        max_tokens: config.LLM_MAX_TOKENS,
-        ...(config.LLM_THINKING === 'false'
-          ? { chat_template_kwargs: { enable_thinking: false } }
-          : {}),
-      }),
+      body,
       signal: stageSignal(parent, config.LLM_TIMEOUT_SECONDS),
     },
     'LLM',
@@ -92,18 +109,37 @@ export async function answer(
   let result = '';
   if (response.headers.get('content-type')?.includes('text/event-stream')) {
     if (!response.body) throw new Error('Empty LLM stream');
-    for await (const delta of parseCompletionStream(response.body)) {
+    for await (const delta of parseCompletionStream(response.body, callbacks.onFinishReason)) {
       result += delta;
-      if (result.length > 16000) throw new Error('Answer exceeds limit');
       onDelta(delta);
+      if (result.length > 16000) throw new Error('Answer exceeds limit');
     }
   } else {
     const data = JSON.parse((await readLimited(response, 1024 * 1024)).toString());
     const content = data.choices?.[0]?.message?.content;
+    const finishReason = data.choices?.[0]?.finish_reason;
+    if (typeof finishReason === 'string') callbacks.onFinishReason?.(finishReason);
     if (typeof content !== 'string') throw new Error('Unsupported completion response');
     result = content;
     onDelta(content);
+    if (result.length > 16000) throw new Error('Answer exceeds limit');
   }
-  if (!result.trim()) throw new Error('LLM returned no visible answer');
+  if (!result.trim()) throw new EmptyCompletionError();
   return result.trim();
+}
+
+export async function answer(
+  config: Config,
+  history: ChatMessage[],
+  language: Language,
+  onDelta: (text: string) => void,
+  parent: AbortSignal,
+  options?: {
+    proactive?: boolean;
+    conversationalPhrases?: boolean;
+    onFinishReason?: (reason: string) => void;
+    onRequestBody?: (body: LlmRequestBody) => void;
+  },
+) {
+  return complete(config, buildReplyMessages(history, language, options), onDelta, parent, options);
 }

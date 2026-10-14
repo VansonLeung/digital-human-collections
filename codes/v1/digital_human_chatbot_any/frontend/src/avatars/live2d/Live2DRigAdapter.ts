@@ -28,6 +28,7 @@ export class Live2DRigAdapter implements AvatarRigAdapter {
     const smile = pose.expressions.happy ?? 0;
     const sad = pose.expressions.sad ?? 0;
     const surprised = pose.expressions.surprised ?? 0;
+    const angry = pose.expressions.angry ?? 0;
     const head = pose.bones.head;
 
     this.core.setParameterValueById('ParamMouthOpenY', this.value);
@@ -37,6 +38,8 @@ export class Live2DRigAdapter implements AvatarRigAdapter {
     this.core.addParameterValueById('ParamEyeRSmile', smile * 0.8);
     this.core.addParameterValueById('ParamBrowLY', surprised);
     this.core.addParameterValueById('ParamBrowRY', surprised);
+    this.core.addParameterValueById('ParamBrowLAngle', -angry);
+    this.core.addParameterValueById('ParamBrowRAngle', -angry);
     this.core.addParameterValueById('ParamAngleX', ((head?.y ?? 0) * 180) / Math.PI);
     this.core.addParameterValueById('ParamAngleY', ((head?.x ?? 0) * 180) / Math.PI);
     this.core.addParameterValueById('ParamAngleZ', ((head?.z ?? 0) * 180) / Math.PI);

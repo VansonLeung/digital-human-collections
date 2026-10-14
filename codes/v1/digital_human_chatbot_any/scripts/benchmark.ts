@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { readConfig, appRoot } from '../backend/src/config.js';
 import { answer } from '../backend/src/services/llm.js';
-import { TaggedReplyParser } from '../backend/src/llm/taggedReplyParser.js';
+import { JsonReplyParser } from '../backend/src/llm/JsonReplyParser.js';
 import { synthesize } from '../backend/src/services/tts.js';
 import { mouthCues } from '../backend/src/services/lipsync.js';
 import { transcribe } from '../backend/src/services/asr.js';
@@ -23,7 +23,7 @@ for (const language of ['en', 'zh'] as Language[]) {
       ? 'Introduce yourself in one short sentence.'
       : '請用一句簡短的普通話介紹自己。';
   const raw = await answer(config, [{ role: 'user', content: prompt }], language, () => {}, signal);
-  const parser = new TaggedReplyParser(
+  const parser = new JsonReplyParser(
     () => {},
     () => {},
   );

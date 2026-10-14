@@ -32,6 +32,7 @@ export class TalkingPerformance {
       sad: emotion.sad * this.level,
       surprised: emotion.surprised * this.level,
       relaxed: emotion.relaxed * this.level,
+      angry: emotion.angry * this.level,
       thoughtful: emotion.thoughtful * this.level,
     };
   }

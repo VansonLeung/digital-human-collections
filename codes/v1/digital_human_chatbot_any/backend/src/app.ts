@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import type { ComponentHealth, Health, Persona } from '@digital-human/shared';
-import { replyLanguageSchema } from '@digital-human/shared';
+import { replyLanguageSchema, llmRequestBodySchema } from '@digital-human/shared';
 import { appRoot, type Config } from './config.js';
 import { Session } from './sessions.js';
 import { MediaStore } from './media.js';
@@ -12,6 +12,10 @@ import { transcribe } from './services/asr.js';
 import { UpstreamError } from './services/http.js';
 import { rhubarbAvailable } from './services/lipsync.js';
 import { transcriptionLanguage } from './services/language.js';
+import { resolveLanguage } from './services/language.js';
+import { suggestReply } from './llm/replySuggestion.js';
+import { ReplyFormatError } from './llm/JsonReplyParser.js';
+import { saveReplyDiagnostic } from './llm/diagnostics.js';
 
 export async function serviceHealth(url: string): Promise<ComponentHealth> {
   try {
@@ -87,6 +91,7 @@ export async function createApplication(config: Config) {
       tts,
       lipsync: { status: lipsync ? 'ready' : 'unavailable' },
       cantoneseSpeech: config.CANTONESE_TTS_ENABLED === 'true',
+      proactiveIdleSeconds: config.PROACTIVE_IDLE_SECONDS,
     };
     res.json(health);
   });
@@ -97,8 +102,78 @@ export async function createApplication(config: Config) {
         .status(503)
         .json({ error: 'Too many local sessions. Close an old session or retry after expiry.' });
     const session = new Session();
+    session.proactive.delaySeconds = config.PROACTIVE_IDLE_SECONDS;
     sessions.set(session.id, session);
     res.status(201).json({ id: session.id });
+  });
+  app.get('/api/sessions/:id/diagnostics/:diagnosticId', (req, res) => {
+    const diagnostic = sessions
+      .get(String(req.params.id))
+      ?.diagnostics.find((item) => item.id === req.params.diagnosticId);
+    if (!diagnostic)
+      return res.status(404).json({ error: 'Diagnostic expired or unavailable for this session.' });
+    res.set('Cache-Control', 'no-store');
+    res.attachment(`llm-reply-${diagnostic.id}.json`).json(diagnostic);
+  });
+  app.post('/api/sessions/:id/suggest-reply', async (req, res, next) => {
+    const session = sessions.get(String(req.params.id));
+    if (!session) return res.status(404).json({ error: 'Session expired.' });
+    const parsed = z
+      .object({ language: replyLanguageSchema, revision: z.number().int().nonnegative() })
+      .safeParse(req.body);
+    if (!parsed.success) return res.status(422).json({ error: 'Invalid suggestion request.' });
+    if (
+      session.active ||
+      session.suggestion ||
+      session.transcription ||
+      parsed.data.revision !== session.revision ||
+      !session.history.length
+    )
+      return res.status(409).json({
+        error: 'The conversation changed or another task is active. Try again when it finishes.',
+      });
+    const controller = new AbortController();
+    session.suggestion = controller;
+    session.proactive.lastActivity = Date.now();
+    const revision = session.revision;
+    const history = [...session.history];
+    const language = resolveLanguage('', parsed.data.language, session.language);
+    const close = () => {
+      if (!res.writableEnded) controller.abort();
+    };
+    res.on('close', close);
+    try {
+      const draft = await suggestReply(config, history, language, controller.signal);
+      if (controller.signal.aborted || session.revision !== revision || session.active)
+        return res
+          .status(409)
+          .json({ error: 'The suggestion was cancelled because the conversation changed.' });
+      res.set('Cache-Control', 'no-store').json({ draft, revision });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        if (!res.destroyed) res.status(409).json({ error: 'Suggestion cancelled.' });
+      } else if (error instanceof ReplyFormatError) {
+        const { requestBody, ...parser } = error.details;
+        const capturedBody = llmRequestBodySchema.safeParse(requestBody);
+        const diagnostic = await saveReplyDiagnostic(config, session, {
+          turnId: controller.signal.aborted ? 'cancelled' : 'suggestion',
+          reason: error.message,
+          rawOutput: typeof error.details.source === 'string' ? error.details.source : '',
+          requestBody: capturedBody.success ? capturedBody.data : null,
+          truncated: false,
+          outputComplete: error.details.outputComplete === true,
+          finishReason:
+            typeof error.details.finishReason === 'string' ? error.details.finishReason : null,
+          parser,
+        });
+        res.status(502).json({ error: error.message, diagnostic });
+      } else next(error);
+    } finally {
+      res.off('close', close);
+      if (session.suggestion === controller) session.suggestion = undefined;
+      session.touched = Date.now();
+      session.proactive.lastActivity = Date.now();
+    }
   });
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -109,7 +184,7 @@ export async function createApplication(config: Config) {
     (req, res, next) => {
       const session = sessions.get(String(req.params.id));
       if (!session) return res.status(404).json({ error: 'Session expired.' });
-      if (session.active || session.transcription)
+      if (session.active || session.transcription || session.suggestion)
         return res.status(409).json({ error: 'Finish or stop the current task first.' });
       next();
     },
@@ -117,7 +192,7 @@ export async function createApplication(config: Config) {
     async (req, res, next) => {
       const session = sessions.get(String(req.params.id));
       if (!session) return res.status(404).json({ error: 'Session expired.' });
-      if (session.active || session.transcription)
+      if (session.active || session.transcription || session.suggestion)
         return res.status(409).json({ error: 'Finish or stop the current task first.' });
       if (!req.file) return res.status(422).json({ error: 'An audio recording is required.' });
       const parsed = replyLanguageSchema.safeParse(req.body.language);
@@ -183,6 +258,7 @@ export async function createApplication(config: Config) {
       if (Date.now() - session.touched > config.SESSION_TTL_SECONDS * 1000) {
         session.stop();
         session.transcription?.abort();
+        session.suggestion?.abort();
         sessions.delete(id);
         void media.cleanup(id).catch(() => {});
       }
@@ -199,6 +275,7 @@ export async function createApplication(config: Config) {
       for (const s of sessions.values()) {
         s.stop();
         s.transcription?.abort();
+        s.suggestion?.abort();
       }
       for (const id of sessions.keys()) await media.cleanup(id);
       sessions.clear();

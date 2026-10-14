@@ -24,7 +24,7 @@ flowchart LR
     API --> ASR[Existing Python ASR :38001]
     ASR -->|editable transcript| API
     UI <-->|commands and events| API
-    API <-->|tagged answer text| LLM[Configured LLM endpoint]
+    API <-->|JSON phrase array| LLM[Configured LLM endpoint]
     API --> TTS[Existing Python TTS :38002]
     TTS -->|phrase WAVs| API
     API -. optional Rhubarb .-> CUES[Local CPU mouth-cue analysis]
@@ -150,7 +150,7 @@ Values and cues above are illustrative. Transmit audio as an ordinary media resp
 2. Typed input can be sent immediately. For voice input, use `MediaRecorder` with a browser-supported MIME type, upload the recording, and let the user edit the returned transcript before sending.
 3. Accept one active turn per session. Bound input/history and stream only user-visible assistant content from the LLM. Reasoning/tool fields must not become spoken text.
 4. Store the completed textual answer when text generation finishes. Keep playback status separate, so a speech failure does not lose a valid answer. Exclude unfinished interrupted assistant text from subsequent LLM context while retaining a visible interrupted message.
-5. Parse streamed performance tags into clean chat text and complete speech phrases. Synthesize phrases sequentially through the persistent TTS service, starting before LLM completion when a phrase is ready. Respect real sample rates and declared limits.
+5. Frame complete JSON phrase objects from provider deltas, repair syntax if needed, and validate before exposing text or controls. Synthesize phrases sequentially through the persistent TTS service, starting before LLM completion when a phrase is ready. Respect real sample rates and declared limits.
 6. Emit `speech.ready` for each phrase with its index, clean text, performance plan, and media URL. Amplitude mode needs no analysis; optional Rhubarb analyzes each phrase WAV. Emit `speech.queue.finished` after production completes, and retain the turn until the browser finishes all audio.
 7. Decode/play through Web Audio. Amplitude mode reads short waveform windows with an `AnalyserNode` before the mute gain, gates silence, and smooths RMS into continuous mouth opening. Rhubarb mode samples cues against the audio clock. Both modes close on pause/Stop/completion; blink/gaze remain separate idle controls.
 8. Finish on actual browser playback completion. Return to idle and release mouth weights. Treat playback failure explicitly and offer retry or a labeled audio-only path.
@@ -173,9 +173,31 @@ For Live2D, the acquired Haru/Ren models declare mouth opening and mouth form; t
 
 Amplitude-driven mouth opening is the default for conversational latency. It drives Live2D `ParamMouthOpenY` and VRM `aa` directly without a Rhubarb subprocess or precomputed cues. It follows voice intensity and silence, but does not recognize phonemes or distinguish vowel shapes. Rhubarb remains selectable for phonetic categories. HeadAudio is a later browser-side experiment; its Mandarin/Cantonese behavior remains unverified.
 
-Talking performance follows actual browser playback. Optional `<emotion name="happy" />` and `<gesture name="open_hand" strength="0.5" />` tags precede a phrase. Emotions persist until replaced; gestures apply to the following phrase. Supported gestures are `nod`, `shake_head`, `wave`, `open_hand`, and `shrug`. The prompt asks for sparse gestures and no timestamps. Known malformed/unfinished control tags and unsupported gesture names are ignored; clean text is streamed to chat and stored in history. No control tags reach TTS.
+Talking performance follows actual browser playback. The LLM returns an array of
+`{"phrase":"Hello!","emotion":"happy","gestures":[{"name":"wave","strength":0.4}]}`
+objects. Emotion and gestures apply to that object's phrase. Supported gestures
+are `nod`, `shake_head`, `wave`, `open_hand`, and `shrug`. The prompt asks for
+sparse gestures, no timestamps, and JSON even when speech is disabled. Only
+phrase text reaches chat and TTS. Joined phrase text is stored as plain assistant
+history; subsequent LLM requests never replay the JSON metadata as conversation.
 
-The backend's incremental parser buffers tags split across provider chunks. Sentence boundaries, explicit tag boundaries, and bounded long clauses produce speech phrases. A single synthesis queue prevents concurrent inference against the persistent TTS worker. Replies are bounded to 32 phrases and 120 seconds of generated audio. The first completed phrase can play while later text/audio is still being produced. Additional TTS calls can affect latency and prosody; no ASR/forced-alignment pass is added.
+The backend's incremental parser tracks nested delimiters, quotes and escapes
+across provider chunks. Each fully closed object is parsed with `JSON.parse`,
+then `jsonrepair` on syntax failure, then validated with Zod. Invalid or missing
+metadata falls back to neutral/no gestures only when phrase text is recoverable.
+If syntax cannot be repaired, an intact first `"phrase"` string can be recovered
+conservatively; otherwise the app shows a format error. Plain prose is never
+spoken as a fallback. Code fences/prose surrounding the first array are ignored.
+
+Unfinished trailing objects are discarded, retaining prior accepted phrases.
+The parser never repairs an incomplete string/object or re-emits the full array
+at completion. Streamed phrases cannot be retracted after playback starts.
+Replies are bounded to 16,000 characters, 32 phrases, 600 characters per phrase,
+32 nesting levels and 120 seconds of generated audio. A single synthesis queue
+prevents concurrent inference against the persistent TTS worker. The first
+completed phrase can play while later text/audio is still being produced.
+Additional TTS calls can affect latency and prosody; no ASR/forced-alignment pass
+is added. Provider-specific constrained JSON generation is not required.
 
 The browser fetches/decode-ahead and schedules contiguous ready phrases on `AudioContext.currentTime`. Gesture curves use the phrase's actual playback position and decoded duration, not wall-clock timers. Pause freezes the timeline and fades to rest; resume continues the same gesture. Stop aborts fetches, stops all scheduled sources, and cancels future phrases. Replay reuses the complete saved audio/performance sequence. If synthesis falls behind playback, the avatar rests during the queue gap. Timing is at phrase boundaries, not individual words.
 
@@ -184,8 +206,9 @@ Code responsibilities:
 | Path | Responsibility |
 | --- | --- |
 | `shared/performance.ts` | Validated gesture, expression and phrase schemas |
-| `backend/src/llm/prompts.ts` | Language and optional performance instructions |
-| `backend/src/llm/taggedReplyParser.ts` | Incremental tag removal, metadata and phrase boundaries |
+| `shared/llmReply.ts` | LLM JSON schema, aliases, limits, and inferred types |
+| `backend/src/llm/prompts.ts` | Language, JSON output and performance instructions |
+| `backend/src/llm/JsonReplyParser.ts` | Streaming object framing, repair, validation and internal phrase adaptation |
 | `backend/src/speech/phraseQueue.ts` | Serial ordered synthesis with cancellation |
 | `frontend/src/audio/SpeechQueuePlayer.ts` | Audio scheduling, buffering, pause, Stop, replay |
 | `frontend/src/audio/amplitude.ts` | Voice-to-mouth response; preserves `.09` / `.55` tuning |
@@ -202,16 +225,138 @@ Known local asset limitation: Ren uses MOC version 6 and offscreen rendering, wh
 
 ## Configuration and language behavior
 
+### Request prompt layout
+
+`backend/src/llm/prompts.ts` separates Mira's persona and short system contract
+from detailed `replyInstructions()` and `draftInstructions()`.
+`backend/src/llm/requestMessages.ts` assembles role-tagged requests: a short
+system message, recent original conversation history, and one final user
+message ending in **RESPONSE REQUIREMENTS**. Normal replies quote the latest
+input under **Given I say:** using JSON string encoding, then append language,
+phrase, emotion, gesture and JSON-array rules. The current message appears
+only once. Proactive replies use a follow-up task instead of invented user
+speech. Suggestions use their own user-side task and JSON draft-object rules.
+
+History remains plain text with its original roles; request wrappers, examples
+and requirements are never committed to history. Context uses at most 12 recent
+conversation messages and drops any leading orphan assistant replies after
+trimming. Prompt-only formatting remains in use; this layout does not enable
+provider-enforced JSON schemas. Diagnostic request bodies show the assembled
+messages exactly as sent.
+
+### Reply suggestions and proactive chat
+
+`Suggest reply` generates one user-side draft via
+`POST /api/sessions/:id/suggest-reply`. Its prompt returns `{"draft":"..."}`;
+the draft never enters history until the user sends it. Existing composer text
+is preserved with a preview/accept action. Typing, Stop, Reset, language changes,
+or a changed conversation revision cancel stale suggestions. The route admits
+one suggestion at a time and rechecks history before returning its result.
+`useReplySuggestion.ts` owns the browser request and review state.
+Like proactive generation, draft requests append a temporary user-role cue
+after the existing history so providers whose chat templates stop on a trailing
+assistant turn start a new generation. The cue never enters saved history.
+Empty completions and invalid drafts include raw-output diagnostics, completion
+status and finish reason instead of the generic service error.
+
+### Automatic replies, phrase bubbles and browser preferences
+
+**Auto-LLM-suggest-and-reply** defaults off. When enabled, the browser waits
+for Mira's response and playback to finish, generates a user-side draft, sends
+it, and repeats. **Conversation settings** exposes the delay (default 3 seconds,
+1–600 allowed) and turn limit (default 5, 1–100 allowed). The counter measures
+automatically sent user messages. A manual send starts a fresh run budget;
+**Resume auto replies** starts another run. Keyboard/pointer activity, typing,
+Stop, errors, disconnection or hiding the tab pauses the run and aborts any
+pending draft. Proactive chat is suspended while this toggle is enabled.
+`useAutoReply.ts` owns scheduling and cancellation; it reuses the same validated
+suggestion request and normal turn pipeline as the manual controls.
+
+Choose **Mira's messages → Phrase bubbles · follow speech** for separate bubbles
+per validated JSON phrase. The LLM is prompted to use two to six natural spoken
+clauses or short utterances. With speech enabled, each bubble appears at that
+phrase's Web Audio start callback. Pause freezes subsequent reveals; replay
+does not duplicate bubbles. With speech disabled, `answer.phrase` events feed
+`usePhraseDisplay.ts`, which spaces reveals by the text-only phrase delay
+(default 0.8 seconds, 0.2–10 allowed). Stop cancels remaining reveals.
+The backend retains joined plain text for history in either display mode;
+`answer.final` never reveals the full message early in phrase mode.
+
+`shared/clientSettings.ts` defines preference types, limits and defaults.
+`frontend/src/settings/storage.ts` validates a versioned localStorage record
+under `persona-studio.settings.v1`; `useSettings.ts` connects it to the controls.
+Persona, language, speech/mute switches, proactive/automatic switches, delays,
+turn limit and display mode survive reloads in the same browser/origin.
+Conversation history, credentials, counters and in-flight work are not saved.
+Reloading does not start a conversation. Invalid saved fields fall back to
+defaults independently, and blocked storage falls back to in-memory settings.
+**Reset settings** restores defaults; **Clear conversation** preserves preferences.
+
+Proactive chat defaults off. Its UI delay defaults to `PROACTIVE_IDLE_SECONDS=60`
+and is editable from 1 to 3600 seconds. `useProactiveChat.ts` arms one follow-up
+per manually sent message, counting only when the preceding response finishes.
+Draft text, suggestion generation/review, recording, transcription, playback,
+pause, errors, disconnected sessions, and hidden tabs suspend the timer.
+Keyboard/pointer activity restarts the delay. Stop suppresses follow-ups until
+the next user message; Reset clears the conversation. Pending proactive
+responses can be interrupted by typing. The backend checks opt-in, idle time,
+history revision and eligibility before calling the model.
+
+Proactive requests use the normal JSON/audio/performance pipeline with an
+ephemeral system instruction and user-role generation cue at the end of the
+provider request. This starts a fresh assistant generation on chat templates
+that otherwise stop immediately when history ends with an assistant message.
+The cue is application-generated, never displayed or persisted as a user message.
+They append only the assistant's plain phrase
+text to history, never a fabricated user message. Speech follows the existing
+Spoken replies switch. Angry is supported in the shared schema, VRM speech
+expressions, initial Live2D brow adapter and TTS instructions; its mouth remains
+audio-controlled. Qwen3 Base still does not apply style instructions.
+
+### Inspecting failed LLM output
+
+An LLM parse failure no longer cuts off the model stream at the first invalid
+object. The backend continues capturing output up to the 16,000-character limit,
+then sends an `error.diagnostic` payload containing raw output, parser state,
+validation/repair details, completion status and the provider's finish reason
+when reported. Failed drafts also expose diagnostics. Transport interruptions
+are explicitly marked as partial output. Cancelled obsolete turns do not emit
+diagnostics into the next conversation.
+
+Open **Inspect raw LLM response** under the error to view/copy the output or
+download the diagnostic JSON. Downloads are session-scoped at
+`/api/sessions/:id/diagnostics/:diagnosticId` with no-store caching. The backend
+also writes files to `runtime/media/diagnostics/`, prints their path, retains up
+to 100 files across sessions/restarts, and keeps 10 downloadable records per
+active session. Reset clears the session's downloadable records; disk artifacts
+remain within that bounded retention. Only model output and troubleshooting
+metadata are recorded, along with the exact serialized LLM request body
+(system prompt, plain-text history, temporary generation cues and generation
+parameters). The inspector has a separate **LLM request body** field and
+**Copy request body** action; diagnostic copies, downloads and disk artifacts
+include it. Request bodies are captured before HTTP calls, including requests
+that fail before output arrives. Older diagnostics without a captured body show
+an unavailable message. Configuration credentials, API keys and request headers
+are omitted.
+Empty provider completions also produce diagnostics, with empty raw output,
+completion status and finish reason when reported. They are reported as an
+empty reply instead of incorrectly describing a completed request as a timeout.
+
 Phrase emotions now reach both the TTS JSON request and the VRM performance
-controller. `normal` and `surprise` tag aliases normalize to `neutral` and
-`surprised`. The LLM is instructed to emit an initial emotion and change it when
-the delivery changes. Facial weights are sustained through the phrase rather
+controller. `normal` and `surprise` emotion aliases normalize to `neutral` and
+`surprised`. Every JSON phrase carries its own emotion, without relying on the
+previous phrase's state. Facial weights are sustained through the phrase rather
 than fading surprise after 2.2 seconds; neutral clears the expression.
 
 Tune individual emotions in `frontend/src/performance/emotions.ts` or scale all
 VRM facial weights with `facialExpressionStrength` in
 `frontend/src/avatars/vrm/tuning.ts`. Speech variants preserve mouth animation
-independently of facial preset overrides. Binary atlas expressions such as
+independently of facial preset overrides. `SpeechFaceMorphs.ts` derives the mouth
+region from vowel morphs and removes lower-face deformation from emotion morphs,
+including their normals. Eyes and eyebrows retain the emotion; audio alone opens
+the mouth, so silence closes the lips even while an emotion remains active.
+These variants are built before the first render and preserve original targets.
+Binary atlas expressions such as
 Seed-san's switch textures discretely and interpolate only their geometry.
 Thoughtful uses the authored `relaxed` preset and a head tilt.
 

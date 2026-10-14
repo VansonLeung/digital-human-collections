@@ -9,6 +9,7 @@ import type { Shape } from '../types';
 import type { PerformancePose } from '../../performance/poseComposer';
 import { vrmTuning } from './tuning';
 import type { AvatarRigAdapter } from '../rig';
+import { SpeechFaceMorphs } from './SpeechFaceMorphs';
 
 /** Maps semantic pose offsets onto normalized VRM bones and expression binds. */
 export class VrmRigAdapter implements AvatarRigAdapter {
@@ -43,7 +44,8 @@ export class VrmRigAdapter implements AvatarRigAdapter {
       const node = this.vrm.humanoid.getNormalizedBoneNode(name);
       if (node) this.body.set(name, { node, rest: node.rotation.clone() });
     }
-    for (const name of ['happy', 'sad', 'surprised', 'relaxed']) {
+    const speechFace = new SpeechFaceMorphs(vrm);
+    for (const name of ['happy', 'sad', 'surprised', 'relaxed', 'angry']) {
       const expression = this.vrm.expressionManager?.getExpression(name);
       if (!expression) continue;
       const morphs = expression.binds.filter(
@@ -51,13 +53,7 @@ export class VrmRigAdapter implements AvatarRigAdapter {
       );
       const speechExpression = new VRMExpression(`talk-${name}`);
       for (const bind of morphs)
-        speechExpression.addBind(
-          new VRMExpressionMorphTargetBind({
-            primitives: bind.primitives,
-            index: bind.index,
-            weight: bind.weight,
-          }),
-        );
+        for (const faceBind of speechFace.bind(bind)) speechExpression.addBind(faceBind);
       speechExpression.overrideBlink = expression.overrideBlink;
       // Facial presets must not suppress the independently animated speech mouth.
       speechExpression.overrideMouth = 'none';
@@ -116,7 +112,7 @@ export class VrmRigAdapter implements AvatarRigAdapter {
       this.weights[key] += (targets[key] - this.weights[key]) * (1 - Math.exp(-dt * 22));
       manager?.setValue(key, this.weights[key]);
     }
-    const names = ['happy', 'sad', 'surprised', 'relaxed'] as const;
+    const names = ['happy', 'sad', 'surprised', 'relaxed', 'angry'] as const;
     const value = (name: (typeof names)[number]) =>
       Math.max(0, Math.min(1, (pose.expressions[name] ?? 0) * vrmTuning.facialExpressionStrength));
     const dominant = names.reduce((best, name) => (value(name) > value(best) ? name : best));

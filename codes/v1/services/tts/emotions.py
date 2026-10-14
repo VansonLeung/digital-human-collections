@@ -2,9 +2,10 @@
 
 from typing import Literal
 
-Emotion = Literal["neutral", "happy", "sad", "surprised", "thoughtful"]
+Emotion = Literal["neutral", "happy", "sad", "surprised", "thoughtful", "angry"]
 
 EMOTION_INSTRUCTIONS: dict[Emotion, str] = {
+    "angry": "Speak with a clearly annoyed, firm tone, emphatic stress and controlled intensity, without shouting.",
     "neutral": "Speak naturally with a calm, conversational tone and normal pace.",
     "happy": "Speak with a clearly happy, cheerful tone, bright intonation and lively energy.",
     "sad": "Speak with a clearly sad, subdued tone, soft volume and a slightly slower pace.",

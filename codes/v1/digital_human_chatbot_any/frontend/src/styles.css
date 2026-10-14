@@ -847,3 +847,159 @@ button {
     animation: none !important;
   }
 }
+
+.suggest-reply {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: #eee8f6;
+  color: #735993;
+  cursor: pointer;
+}
+.suggest-reply .loader {
+  width: 15px;
+  height: 15px;
+}
+.proactive-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 0 24px 14px;
+  font-size: 12px;
+  color: #766c82;
+}
+.proactive-options label {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.proactive-options input[type='number'] {
+  width: 60px;
+  padding: 4px;
+  border: 1px solid #ded6e6;
+  border-radius: 6px;
+}
+.suggestion-preview {
+  margin: 8px 20px;
+  padding: 12px;
+  background: #f5f0fa;
+  border-radius: 10px;
+  font-size: 13px;
+}
+.suggestion-preview p {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+}
+.suggestion-preview button,
+.reply-diagnostics button {
+  margin-right: 10px;
+  border: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.reply-diagnostics {
+  margin: 8px 20px;
+  padding: 10px;
+  border: 1px solid #e0d6e7;
+  border-radius: 8px;
+  font-size: 12px;
+  min-height: 0;
+  max-height: 280px;
+  overflow: auto;
+  flex-shrink: 0;
+}
+.reply-diagnostics summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.reply-diagnostics p {
+  overflow-wrap: anywhere;
+}
+.reply-diagnostics textarea {
+  display: block;
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  font-family: monospace;
+  font-size: 12px;
+}
+.reply-diagnostics pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.reply-diagnostics a {
+  color: #735993;
+}
+
+.auto-reply-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 0 24px 10px;
+  font-size: 12px;
+  color: #766c82;
+}
+.auto-reply-options label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.auto-reply-options span {
+  font-size: 11px;
+}
+.auto-reply-options button,
+.conversation-settings button {
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: #eee8f6;
+  color: #735993;
+  cursor: pointer;
+}
+.conversation-settings {
+  margin: 0 24px 12px;
+  font-size: 12px;
+  color: #766c82;
+  max-height: 200px;
+  overflow: auto;
+  flex-shrink: 0;
+}
+.conversation-settings summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+.settings-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.settings-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-fields input,
+.settings-fields select {
+  width: 100%;
+  padding: 5px;
+  border: 1px solid #ded6e6;
+  border-radius: 6px;
+  background: #fff;
+  color: #4d415c;
+}
+.conversation-settings p {
+  margin: 8px 0;
+  line-height: 1.5;
+}
+.settings-fields select {
+  min-width: 0;
+}

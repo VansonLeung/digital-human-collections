@@ -35,8 +35,9 @@ const command = {
 
 const adapters: Services = {
   answer: async (_c, _h, _l, delta) => {
-    delta('Hello.');
-    return 'Hello.';
+    const reply = JSON.stringify([{ phrase: 'Hello.', emotion: 'neutral', gestures: [] }]);
+    delta(reply);
+    return reply;
   },
   synthesize: async () => ({ bytes: Buffer.from('wav'), duration: 1 }),
   mouthCues: async () => [{ start: 0, end: 1, shape: 'D' }],
@@ -329,8 +330,11 @@ test('amplitude mode skips Rhubarb and routes one resolved language through LLM 
       {
         answer: async (_c, _h, language, delta) => {
           called.push(`llm:${language}`);
-          delta('佢有八條腕。');
-          return '佢有八條腕。';
+          const reply = JSON.stringify([
+            { phrase: '佢有八條腕。', emotion: 'neutral', gestures: [] },
+          ]);
+          delta(reply);
+          return reply;
         },
         synthesize: async (_c, _text, language) => {
           called.push(`tts:${language}`);
