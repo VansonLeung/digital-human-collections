@@ -30,6 +30,7 @@ import { SpeechQueuePlayer } from './audio/SpeechQueuePlayer';
 import { useReplySuggestion } from './hooks/useReplySuggestion';
 import { useProactiveChat } from './hooks/useProactiveChat';
 import { ReplyDiagnostics } from './components/ReplyDiagnostics';
+import { PoseControls } from './components/PoseControls';
 import { useSettings } from './hooks/useSettings';
 import { useAutoReply } from './hooks/useAutoReply';
 import { usePhraseDisplay } from './hooks/usePhraseDisplay';
@@ -67,6 +68,8 @@ export function App() {
     autoReplyMaxTurns,
     displayMode,
     textPhraseDelaySeconds,
+    poseStrength,
+    poseHoldSeconds,
   } = preferences.settings;
   const setPersonaId = (value: string) => preferences.update('personaId', value);
   const setLanguage = (value: ReplyLanguage) => preferences.update('language', value);
@@ -222,6 +225,9 @@ export function App() {
   useEffect(() => {
     player.current!.setMuted(muted);
   }, [muted]);
+  useEffect(() => {
+    if (avatarReady) renderer.current?.setPoseHoldSeconds?.(poseHoldSeconds);
+  }, [avatarReady, poseHoldSeconds]);
   useEffect(() => {
     if (personas.length && !personas.some((item) => item.id === personaId))
       setPersonaId(personas[0].id);
@@ -586,6 +592,7 @@ export function App() {
     suggestion.cancel();
     proactiveTurn.current = false;
     player.current!.stop();
+    renderer.current?.stopPose?.();
     queueTurn.current = null;
     speechPhrases.current = [];
     setLastSpeech(undefined);
@@ -1111,88 +1118,105 @@ export function App() {
               </button>
             )}
           </div>
-          <details className="conversation-settings">
-            <summary>Conversation settings</summary>
-            <div className="settings-fields">
-              <label>
-                Auto reply delay (seconds)
-                <input
-                  type="number"
-                  aria-label="Auto reply delay seconds"
-                  min={1}
-                  max={600}
-                  step={0.5}
-                  value={autoReplyDelaySeconds}
-                  onChange={(event) => {
-                    const value = Number(event.target.value);
-                    if (value >= 1 && value <= 600)
-                      preferences.update('autoReplyDelaySeconds', value);
-                  }}
-                />
-              </label>
-              <label>
-                Auto reply turn limit
-                <input
-                  type="number"
-                  aria-label="Auto reply turn limit"
-                  min={1}
-                  max={100}
-                  value={autoReplyMaxTurns}
-                  onChange={(event) => {
-                    const value = Number(event.target.value);
-                    if (Number.isInteger(value) && value >= 1 && value <= 100)
-                      preferences.update('autoReplyMaxTurns', value);
-                  }}
-                />
-              </label>
-              <label>
-                Mira's messages
-                <select
-                  aria-label="Mira message display"
-                  value={displayMode}
-                  disabled={disabled}
-                  onChange={(event) =>
-                    preferences.update('displayMode', event.target.value as 'full' | 'phrases')
-                  }
-                >
-                  <option value="full">Full reply</option>
-                  <option value="phrases">Phrase bubbles · follow speech</option>
-                </select>
-              </label>
-              <label>
-                Text-only phrase delay (seconds)
-                <input
-                  type="number"
-                  aria-label="Text-only phrase delay seconds"
-                  min={0.2}
-                  max={10}
-                  step={0.1}
-                  value={textPhraseDelaySeconds}
-                  disabled={disabled}
-                  onChange={(event) => {
-                    const value = Number(event.target.value);
-                    if (value >= 0.2 && value <= 10)
-                      preferences.update('textPhraseDelaySeconds', value);
-                  }}
-                />
-              </label>
-            </div>
-            <p>
-              Settings are remembered in this browser. Auto replies wait for Mira to finish; typing,
-              Stop, errors, or leaving the tab pauses them. Proactive chat waits while auto replies
-              are enabled.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                stop();
-                preferences.reset();
-                setCompletedRevision(null);
-              }}
-            >
-              Reset settings
-            </button>
-          </details>
+          <div className="conversation-preferences">
+            <details className="conversation-settings">
+              <summary>Conversation settings</summary>
+              <div className="settings-fields">
+                <label>
+                  Auto reply delay (seconds)
+                  <input
+                    type="number"
+                    aria-label="Auto reply delay seconds"
+                    min={1}
+                    max={600}
+                    step={0.5}
+                    value={autoReplyDelaySeconds}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (value >= 1 && value <= 600)
+                        preferences.update('autoReplyDelaySeconds', value);
+                    }}
+                  />
+                </label>
+                <label>
+                  Auto reply turn limit
+                  <input
+                    type="number"
+                    aria-label="Auto reply turn limit"
+                    min={1}
+                    max={100}
+                    value={autoReplyMaxTurns}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isInteger(value) && value >= 1 && value <= 100)
+                        preferences.update('autoReplyMaxTurns', value);
+                    }}
+                  />
+                </label>
+                <label>
+                  Mira's messages
+                  <select
+                    aria-label="Mira message display"
+                    value={displayMode}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      preferences.update('displayMode', event.target.value as 'full' | 'phrases')
+                    }
+                  >
+                    <option value="full">Full reply</option>
+                    <option value="phrases">Phrase bubbles · follow speech</option>
+                  </select>
+                </label>
+                <label>
+                  Text-only phrase delay (seconds)
+                  <input
+                    type="number"
+                    aria-label="Text-only phrase delay seconds"
+                    min={0.2}
+                    max={10}
+                    step={0.1}
+                    value={textPhraseDelaySeconds}
+                    disabled={disabled}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (value >= 0.2 && value <= 10)
+                        preferences.update('textPhraseDelaySeconds', value);
+                    }}
+                  />
+                </label>
+              </div>
+              <p>
+                Settings are remembered in this browser. Auto replies wait for Mira to finish;
+                typing, Stop, errors, or leaving the tab pauses them. Proactive chat waits while
+                auto replies are enabled.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  stop();
+                  preferences.reset();
+                  setCompletedRevision(null);
+                }}
+              >
+                Reset settings
+              </button>
+            </details>
+            {persona?.renderer === 'vrm' && (
+              <PoseControls
+                disabled={!avatarReady}
+                strength={poseStrength}
+                holdSeconds={poseHoldSeconds}
+                onStrength={(value) => preferences.update('poseStrength', value)}
+                onHoldSeconds={(value) => preferences.update('poseHoldSeconds', value)}
+                onPreview={(name) => {
+                  autoReply.pause();
+                  proactive.touch();
+                  renderer.current?.previewPose?.(name, poseStrength, poseHoldSeconds);
+                }}
+                onStop={() => renderer.current?.stopPose?.()}
+              />
+            )}
+          </div>
         </section>
       </main>
       <footer className="footer">

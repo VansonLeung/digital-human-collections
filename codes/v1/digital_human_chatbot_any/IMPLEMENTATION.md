@@ -176,7 +176,8 @@ Amplitude-driven mouth opening is the default for conversational latency. It dri
 Talking performance follows actual browser playback. The LLM returns an array of
 `{"phrase":"Hello!","emotion":"happy","gestures":[{"name":"wave","strength":0.4}]}`
 objects. Emotion and gestures apply to that object's phrase. Supported gestures
-are `nod`, `shake_head`, `wave`, `open_hand`, and `shrug`. The prompt asks for
+are `nod`, `shake_head`, `wave`, `open_hand`, and `shrug`, plus the seven VRM pose
+presets described below. The prompt asks for
 sparse gestures, no timestamps, and JSON even when speech is disabled. Only
 phrase text reaches chat and TTS. Joined phrase text is stored as plain assistant
 history; subsequent LLM requests never replay the JSON metadata as conversation.
@@ -217,7 +218,54 @@ Code responsibilities:
 | `frontend/src/avatars/vrm/` | VRM scene, normalized-bone adapter and tuning |
 | `frontend/src/avatars/live2d/` | Initial face/head adapter; body cues omitted |
 
-Explicit phrase plans suppress the automatic arm loop. Idle breathing, blinking and small torso/head shifts remain separate. VRM pose offsets use captured resting rotations, never hip/root translation. Missing optional bones are ignored. Seed-san's binary texture-atlas expressions have geometry-only speech variants so smooth smiles do not slide facial textures. `frontend/src/avatars/vrm/tuning.ts` holds body strength and the preserved mouth ratio of `1`.
+Explicit phrase plans suppress the automatic arm loop. Idle breathing, blinking and small torso/head shifts remain separate. VRM pose offsets use captured resting rotations and keep the scene root stationary. A dramatic stance can lower the pelvis while foot constraints hold both standing anchors. Missing optional bones are ignored. Seed-san's binary texture-atlas expressions have geometry-only speech variants so smooth smiles do not slide facial textures. `frontend/src/avatars/vrm/tuning.ts` holds body strength and the preserved mouth ratio of `1`.
+
+### VRM pose previews and LLM poses
+
+Open **VRM poses · 姿勢** below the conversation settings to preview **叉腰 / Hands
+on hips**, **舉手 / Raise hand**, **Crossed arms**, **Hand on chin**, **Dramatic point**
+and **Dramatic lean**, plus **三七面 · Tsundere turn**. Previews work before a conversation starts and while
+speaking. **Return to idle** releases the pose; Stop/Reset also releases it.
+Strength (0.2–1, default 0.9) controls previews. Hold time (0.5–10 seconds,
+default 3) controls previews and LLM poses. Both preferences persist in this
+browser. Preview buttons are shown only for VRM avatars.
+
+The existing JSON `gestures` array also accepts `hands_on_hips`, `raise_hand`,
+`crossed_arms`, `hand_on_chin`, `dramatic_point`, `dramatic_lean` and `tsundere_turn`, with the same
+numeric `strength` field. The prompt describes when to choose them and asks for
+at most one held pose per phrase. No new LLM response fields are required.
+LLM poses use the phrase's audio clock, so Pause freezes their hold timing and
+Replay repeats them. A new phrase, Stop or the end of speech can shorten a pose.
+Manual previews take priority over speech body cues and use render time.
+Facial emotion and amplitude/phonetic mouth animation remain independent.
+
+`tsundere_turn` turns the upper body and face toward a three-quarter view, folds
+the arms against the turned chest, and glances back toward the camera.
+Mira's authored gaze mapping produces only about 4 degrees of eye movement for
+this pose. The pose temporarily uses a direct horizontal mapping capped at
+12 degrees, avoiding iris clipping at larger rotations. Seed-san's expression
+mapping reaches its authored full glance at a 30-degree gaze input.
+`poseGazeMaxDegrees` and `poseGazeExpressionInputDegrees` in VRM `tuning.ts`
+control these settings; vertical gaze retains the model's mapping.
+Its head turn is about 38 degrees at strength 1; lower
+strength softens the turn. Feet and the scene root stay stationary, with the
+conversation camera framing retained. The LLM chooses this gesture for playful
+denial, embarrassed affection, or reluctant helpfulness; ordinary anger does
+not trigger it automatically. Emotion remains a separate existing label.
+`VrmGazeController.ts` restores previous eye tracking and range maps when the pose releases;
+models without look-at support still perform the body turn.
+
+`poseLibrary.ts` holds SDK-independent pose definitions; `PoseController.ts`
+selects one body action, blends in/out over 0.35 seconds, and releases old contact
+targets before replacement. `PerformanceController.ts` combines the resulting
+body layer with existing idle, speech and facial layers. `VrmRigAdapter.ts` is
+the single bone writer. `VrmPoseConstraints.ts` resolves waist, chin, chest and
+brow contacts using the loaded model's proportions; `TwoBoneIK.ts` preserves
+limb lengths and solves arm/leg chains. Optional finger bones support thinking
+and pointing hands. Raised-hand and dramatic poses automatically widen camera
+framing, including on narrow viewports, then return to the conversation framing.
+Live2D continues to omit unsupported body cues. Dance/VRMA clip playback is a
+separate future step; this package contains seven held pose presets.
 
 All first-party TypeScript/TSX/CSS/JSON/HTML source is formatted, with separated declarations and methods. Use `npm run format` and `npm run format:check`; vendor assets, generated output, runtime files, lockfiles and `.env` files are excluded. `npm run test:queue` checks real Chrome ordering, audio-clock timing, pause, replay and Stop. `npm run test:avatars` checks real Mira/Seed-san bones, smile morphs, a stationary root, return to rest and clock-directed gestures.
 

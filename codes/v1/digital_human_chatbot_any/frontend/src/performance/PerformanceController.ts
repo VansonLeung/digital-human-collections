@@ -1,11 +1,13 @@
-import type { Emotion, PhrasePerformance } from '@digital-human/shared';
+import type { Emotion, PhrasePerformance, PoseName } from '@digital-human/shared';
 import { TalkingPerformance } from './idleMotion';
 import { gesturePose } from './gestureLibrary';
 import { composePose, rotation, type PerformancePose } from './poseComposer';
+import { PoseController } from './PoseController';
 
 /** Combines idle motion and phrase instructions independently of any avatar SDK. */
 export class PerformanceController {
   private idle = new TalkingPerformance();
+  private poses = new PoseController();
   private phrase?: PhrasePerformance;
   private duration = 0;
   private elapsed = 0;
@@ -25,10 +27,25 @@ export class PerformanceController {
     this.duration = duration;
     this.elapsed = 0;
     this.idle.setEmotion(phrase.emotion);
+    this.poses.beginPhrase(phrase.gestures);
   }
 
   setPlaybackTime(seconds: number) {
     this.elapsed = Math.max(0, seconds);
+    this.poses.playbackTime(seconds);
+  }
+
+  previewPose(name: PoseName, strength: number, holdSeconds: number) {
+    this.poses.preview(name, strength, holdSeconds);
+  }
+  stopPose() {
+    this.poses.stop();
+  }
+  setPoseHoldSeconds(seconds: number) {
+    this.poses.holdSeconds = Math.max(0.5, Math.min(10, seconds));
+  }
+  get fullBodyWeight() {
+    return this.poses.fullBodyWeight;
   }
 
   update(dt: number, opening: number, now = performance.now()): PerformancePose {
@@ -75,7 +92,7 @@ export class PerformanceController {
       this.phrase?.gestures.map((gesture) =>
         gesturePose(gesture, this.elapsed, this.duration, this.idle.level),
       ) ?? [];
-    const result = composePose(base, ...gestures);
+    const result = this.poses.update(composePose(base, ...gestures), dt, this.idle.level);
     for (const name of ['happy', 'sad', 'surprised', 'relaxed', 'angry'] as const) {
       this.expressionWeights[name] +=
         ((result.expressions[name] ?? 0) - this.expressionWeights[name]) *

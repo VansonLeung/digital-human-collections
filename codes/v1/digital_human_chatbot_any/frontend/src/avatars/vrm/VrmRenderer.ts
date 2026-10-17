@@ -1,26 +1,34 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
-import type { Emotion, PhrasePerformance } from '@digital-human/shared';
+import {
+  gestureNameSchema,
+  type Emotion,
+  type PhrasePerformance,
+  type PoseName,
+} from '@digital-human/shared';
 import type { AvatarRenderer, Shape } from '../types';
 import { openness } from '../types';
 import { PerformanceController } from '../../performance/PerformanceController';
 import { VrmRigAdapter } from './VrmRigAdapter';
+import { VrmGazeController } from './VrmGazeController';
 
 /** Scene and drawing only; rig binding and performance planning are separate. */
 export class VrmRenderer implements AvatarRenderer {
-  readonly supportedGestures = ['nod', 'shake_head', 'wave', 'open_hand', 'shrug'] as const;
+  readonly supportedGestures = gestureNameSchema.options;
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
   private vrm?: VRM;
   private rig?: VrmRigAdapter;
+  private gaze?: VrmGazeController;
   private observer: ResizeObserver;
   private frame = 0;
   private disposed = false;
   private last = performance.now();
   private opening = 0;
   private performance = new PerformanceController();
+  private framing?: { bottom: number; height: number };
 
   constructor(private host: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -47,6 +55,7 @@ export class VrmRenderer implements AvatarRenderer {
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.frameCamera();
   }
 
   async load(url: string) {
@@ -63,11 +72,11 @@ export class VrmRenderer implements AvatarRenderer {
     VRMUtils.rotateVRM0(vrm);
     this.scene.add(vrm.scene);
     this.rig = new VrmRigAdapter(vrm);
+    this.gaze = new VrmGazeController(vrm);
     const box = new THREE.Box3().setFromObject(vrm.scene);
     const height = box.max.y - box.min.y;
-    const focus = box.min.y + height * 0.82;
-    this.camera.position.set(0, focus, height * 1.08);
-    this.camera.lookAt(0, focus, 0);
+    this.framing = { bottom: box.min.y, height };
+    this.frameCamera();
   }
 
   setMouth(shape: Shape) {
@@ -96,6 +105,32 @@ export class VrmRenderer implements AvatarRenderer {
     this.performance.setPlaybackTime(seconds);
   }
 
+  previewPose(name: PoseName, strength: number, holdSeconds: number) {
+    this.performance.previewPose(name, strength, holdSeconds);
+  }
+  stopPose() {
+    this.performance.stopPose();
+  }
+  setPoseHoldSeconds(seconds: number) {
+    this.performance.setPoseHoldSeconds(seconds);
+  }
+
+  private frameCamera() {
+    if (!this.framing) return;
+    const { bottom, height } = this.framing;
+    const weight = this.performance.fullBodyWeight;
+    const halfFov = THREE.MathUtils.degToRad(this.camera.fov / 2);
+    // Fit both the raised hand and wide pointing stance, including on phones.
+    const fullDistance = Math.max(
+      (height * 0.8) / Math.tan(halfFov),
+      (height * 0.65) / (Math.tan(halfFov) * this.camera.aspect),
+    );
+    const focus = bottom + height * (0.82 + (0.6 - 0.82) * weight);
+    const distance = height * 1.08 + (fullDistance - height * 1.08) * weight;
+    this.camera.position.set(0, focus, distance);
+    this.camera.lookAt(0, focus, 0);
+  }
+
   private animate = () => {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.animate);
@@ -103,7 +138,10 @@ export class VrmRenderer implements AvatarRenderer {
     const dt = Math.min((now - this.last) / 1000, 0.1);
     this.last = now;
     if (this.vrm && this.rig) {
-      this.rig.applyPose(this.performance.update(dt, this.opening, now), dt);
+      const pose = this.performance.update(dt, this.opening, now);
+      this.rig.applyPose(pose, dt);
+      this.frameCamera();
+      this.gaze?.update(this.camera, pose.cameraGaze ?? 0);
       this.vrm.update(dt);
     }
     this.renderer.render(this.scene, this.camera);
@@ -111,6 +149,7 @@ export class VrmRenderer implements AvatarRenderer {
 
   dispose() {
     this.disposed = true;
+    this.gaze?.reset();
     cancelAnimationFrame(this.frame);
     this.observer.disconnect();
     if (this.vrm) VRMUtils.deepDispose(this.vrm.scene);

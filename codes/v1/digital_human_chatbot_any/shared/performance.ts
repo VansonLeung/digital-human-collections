@@ -11,7 +11,35 @@ export const emotionSchema = z.enum([
 
 export type Emotion = z.infer<typeof emotionSchema>;
 
-export const gestureNameSchema = z.enum(['nod', 'shake_head', 'wave', 'open_hand', 'shrug']);
+export const poseNameSchema = z.enum([
+  'hands_on_hips',
+  'raise_hand',
+  'crossed_arms',
+  'hand_on_chin',
+  'dramatic_point',
+  'dramatic_lean',
+  'tsundere_turn',
+]);
+export type PoseName = z.infer<typeof poseNameSchema>;
+
+export const poseLabels: Record<PoseName, string> = {
+  hands_on_hips: '叉腰 · Hands on hips',
+  raise_hand: '舉手 · Raise hand',
+  crossed_arms: 'Crossed arms',
+  hand_on_chin: 'Hand on chin',
+  dramatic_point: 'Dramatic point',
+  dramatic_lean: 'Dramatic lean',
+  tsundere_turn: '三七面 · Tsundere turn',
+};
+
+export const gestureNameSchema = z.enum([
+  'nod',
+  'shake_head',
+  'wave',
+  'open_hand',
+  'shrug',
+  ...poseNameSchema.options,
+]);
 
 export type GestureName = z.infer<typeof gestureNameSchema>;
 

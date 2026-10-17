@@ -89,16 +89,23 @@ try {
                   mouthTop = Math.max(mouthTop, base.getY(vertex));
               }
             }
-          return { mesh, base, mouthTop };
+          const blinkIndices = new Set<number>();
+          for (const name of ['blink', 'blinkLeft', 'blinkRight'])
+            for (const bind of manager.getExpression(name)?.binds ?? [])
+              if (bind.primitives?.includes(mesh)) blinkIndices.add(bind.index);
+          return { mesh, base, mouthTop, blinkIndices };
         });
         (window as any).measureFace = () => {
           let lowerFace = 0;
           let upperFace = 0;
-          for (const { mesh, base, mouthTop } of probes) {
+          for (const { mesh, base, mouthTop, blinkIndices } of probes) {
             const morphs = mesh.geometry.morphAttributes.position;
             for (let vertex = 0; vertex < base.count; vertex++) {
               const delta = [0, 0, 0];
               for (let index = 0; index < morphs.length; index++) {
+                // These models' blink binds also move cheeks. Isolate mouth
+                // and emotion deformation rather than measuring that blink.
+                if (blinkIndices.has(index)) continue;
                 const weight = mesh.morphTargetInfluences[index] ?? 0;
                 if (Math.abs(weight) < 1e-7) continue;
                 for (const [component, axis] of ['X', 'Y', 'Z'].entries())
@@ -158,6 +165,179 @@ try {
     assert.ok(result.talking.smile > 0.1);
     assert.deepEqual(result.talking.root, result.rest.root);
     await page.screenshot({ path: path.join(qa, `gestures-${id}.png`) });
+    for (const name of [
+      'tsundere_turn',
+      'hands_on_hips',
+      'raise_hand',
+      'crossed_arms',
+      'hand_on_chin',
+      'dramatic_point',
+      'dramatic_lean',
+    ]) {
+      const pose = await page.evaluate(async (name) => {
+        const renderer = (window as any).checkedAvatar;
+        const bone = (name: string) => renderer.vrm.humanoid.getNormalizedBoneNode(name);
+        const feet = ['leftFoot', 'rightFoot'].map((name) =>
+          bone(name).getWorldPosition(bone(name).position.clone()).toArray(),
+        );
+        const root = renderer.vrm.scene.position.toArray();
+        const head = bone('head');
+        const headRest = head.getWorldQuaternion(head.quaternion.clone());
+        const cameraRest = renderer.camera.position.toArray();
+        const lookAt = renderer.vrm.lookAt;
+        const rawEyes = ['leftEye', 'rightEye'].map((name) =>
+          renderer.vrm.humanoid.getRawBoneNode(name),
+        );
+        const eyeRest = rawEyes.map((eye) => eye?.quaternion.clone());
+        const gazeRest = lookAt
+          ? {
+              yaw: lookAt.yaw,
+              pitch: lookAt.pitch,
+              autoUpdate: lookAt.autoUpdate,
+              target: lookAt.target,
+              ranges: ['rangeMapHorizontalInner', 'rangeMapHorizontalOuter'].map((name) => ({
+                inputMaxValue: lookAt.applier[name].inputMaxValue,
+                outputScale: lookAt.applier[name].outputScale,
+              })),
+            }
+          : undefined;
+        (window as any).poseGazeRest = gazeRest;
+        renderer.setSpeaking(false);
+        renderer.setMouthOpening(0);
+        renderer.previewPose(name, 1, 4);
+        await new Promise((resolve) => setTimeout(resolve, 950));
+        const currentFeet = ['leftFoot', 'rightFoot'].map((name) =>
+          bone(name).getWorldPosition(bone(name).position.clone()).toArray(),
+        );
+        const projected = ['leftFoot', 'rightFoot', 'rightHand', 'head'].map((name) =>
+          bone(name)
+            .getWorldPosition(bone(name).position.clone())
+            .project(renderer.camera)
+            .toArray(),
+        );
+        const mouthClosed = renderer.vrm.expressionManager.getValue('aa');
+        renderer.setMouthOpening(0.6);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const mouthOpen = renderer.vrm.expressionManager.getValue('aa');
+        renderer.setMouthOpening(0);
+        return {
+          feet,
+          currentFeet,
+          root,
+          currentRoot: renderer.vrm.scene.position.toArray(),
+          projected,
+          mouthClosed,
+          mouthOpen,
+          left: bone('leftUpperArm').rotation.toArray().slice(0, 3),
+          right: bone('rightUpperArm').rotation.toArray().slice(0, 3),
+          camera: renderer.camera.position.toArray(),
+          cameraRest,
+          headTurn: headRest.angleTo(head.getWorldQuaternion(head.quaternion.clone())),
+          gaze: lookAt
+            ? {
+                yaw: lookAt.yaw,
+                pitch: lookAt.pitch,
+                autoUpdate: lookAt.autoUpdate,
+                eyeDegrees: rawEyes.map((eye, index) =>
+                  eye ? (eyeRest[index].angleTo(eye.quaternion) * 180) / Math.PI : null,
+                ),
+                // Check applied morph weights, not just the look-at request.
+                eyeMorph: Math.max(
+                  ...['lookLeft', 'lookRight'].flatMap(
+                    (name) =>
+                      renderer.vrm.expressionManager
+                        .getExpression(name)
+                        ?.binds.flatMap((bind) =>
+                          (bind.primitives ?? []).map(
+                            (primitive) => primitive.morphTargetInfluences?.[bind.index] ?? 0,
+                          ),
+                        ) ?? [],
+                  ),
+                  0,
+                ),
+              }
+            : undefined,
+        };
+      }, name);
+      assert.deepEqual(pose.currentRoot, pose.root, `${id} ${name} must not move the scene root`);
+      assert.ok(pose.mouthClosed < 0.001, `${id} ${name} must not open the mouth`);
+      assert.ok(pose.mouthOpen > 0.4, `${id} ${name} must preserve mouth animation`);
+      assert.ok(
+        pose.left.some(
+          (value: number, i: number) => Math.abs(value - result.rest.left[i]) > 0.05,
+        ) ||
+          pose.right.some(
+            (value: number, i: number) => Math.abs(value - result.rest.right[i]) > 0.05,
+          ),
+      );
+      if (name === 'tsundere_turn') {
+        assert.ok(
+          pose.headTurn > 0.5 && pose.headTurn < 0.9,
+          `${id} three-quarter head turn: ${pose.headTurn}`,
+        );
+        assert.deepEqual(
+          pose.camera,
+          pose.cameraRest,
+          `${id} tsundere turn keeps conversation framing`,
+        );
+        assert.ok(
+          pose.gaze && Math.abs(pose.gaze.yaw) > 20,
+          `${id} glances back toward the viewer`,
+        );
+        assert.equal(pose.gaze?.autoUpdate, false);
+        if (id === 'mira') {
+          assert.ok(
+            pose.gaze.eyeDegrees.every((angle: number) => angle > 10 && angle < 13),
+            `${id} actual eye rotations: ${JSON.stringify(pose.gaze.eyeDegrees)}`,
+          );
+        } else {
+          assert.ok(
+            pose.gaze.eyeMorph > 0.9,
+            `${id} actual eye morph weight: ${pose.gaze.eyeMorph}`,
+          );
+        }
+      }
+      if (name === 'dramatic_lean' || name === 'tsundere_turn') {
+        for (let side = 0; side < 2; side++)
+          assert.ok(
+            Math.hypot(
+              ...pose.currentFeet[side].map(
+                (value: number, i: number) => value - pose.feet[side][i],
+              ),
+            ) < 0.005,
+            `${id} ${name} must keep both feet planted`,
+          );
+      }
+      if (['raise_hand', 'dramatic_point', 'dramatic_lean'].includes(name))
+        assert.ok(
+          pose.projected.every(
+            (point: number[]) => Math.abs(point[0]) < 1 && Math.abs(point[1]) < 1,
+          ),
+          `${id} ${name} full body should fit: ${JSON.stringify(pose.projected)}`,
+        );
+      await page.screenshot({ path: path.join(qa, `pose-${id}-${name}.png`) });
+      const released = await page.evaluate(async () => {
+        const renderer = (window as any).checkedAvatar;
+        renderer.stopPose();
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        const lookAt = renderer.vrm.lookAt;
+        const rest = (window as any).poseGazeRest;
+        return (
+          !rest ||
+          (lookAt.target === rest.target &&
+            lookAt.autoUpdate === rest.autoUpdate &&
+            Math.abs(lookAt.yaw - rest.yaw) < 1e-5 &&
+            Math.abs(lookAt.pitch - rest.pitch) < 1e-5 &&
+            ['rangeMapHorizontalInner', 'rangeMapHorizontalOuter'].every(
+              (name, index) =>
+                lookAt.applier[name].inputMaxValue === rest.ranges[index].inputMaxValue &&
+                lookAt.applier[name].outputScale === rest.ranges[index].outputScale,
+            ))
+        );
+      });
+      assert.ok(released, `${id} ${name} restores previous gaze`);
+    }
+    await page.evaluate(() => (window as any).checkedAvatar.setSpeaking(true));
     for (const emotion of [
       'happy',
       'sad',
@@ -218,16 +398,23 @@ try {
       const closed = await page.evaluate(async () => {
         const renderer = (window as any).checkedAvatar;
         renderer.setMouthOpening(0);
+        const renderedMouthWeight = () => {
+          const manager = renderer.vrm.expressionManager;
+          const weights = ['aa', 'ih', 'ee', 'oh', 'ou'].flatMap((name) =>
+            (manager.getExpression(name)?.binds ?? []).flatMap((bind: any) =>
+              (bind.primitives ?? []).map((mesh: any) =>
+                Math.abs(mesh.morphTargetInfluences[bind.index] ?? 0),
+              ),
+            ),
+          );
+          return Math.max(0, ...weights);
+        };
         // Wait for rendered animation frames, not a wall-clock delay that can
         // expire while another Chrome check has backgrounded this page.
         await new Promise<void>((resolve) => {
           const started = performance.now();
           const settled = () => {
-            if (
-              (renderer.vrm.expressionManager.getValue('aa') ?? 0) < 1e-5 ||
-              performance.now() - started > 5000
-            )
-              resolve();
+            if (renderedMouthWeight() < 1e-5 || performance.now() - started > 5000) resolve();
             else requestAnimationFrame(settled);
           };
           requestAnimationFrame(settled);
@@ -243,7 +430,7 @@ try {
       );
       assert.ok(
         closed.phonetic.lowerFace < 1e-5,
-        `${id} ${emotion} must close for phonetic rest too`,
+        `${id} ${emotion} must close for phonetic rest too: ${JSON.stringify(closed)}`,
       );
       if (emotion !== 'neutral')
         assert.ok(
@@ -308,6 +495,10 @@ try {
           'binary facial texture selection',
           'mouth closes under every active emotion',
           'eyes/brows remain expressive during silence',
+          'seven pose presets without speech',
+          'three-quarter tsundere turn and restored camera gaze',
+          'poses preserve independent mouth animation',
+          'dramatic pose camera framing and planted feet',
         ],
       }),
     );

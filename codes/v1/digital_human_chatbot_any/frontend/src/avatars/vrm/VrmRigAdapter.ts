@@ -10,16 +10,21 @@ import type { PerformancePose } from '../../performance/poseComposer';
 import { vrmTuning } from './tuning';
 import type { AvatarRigAdapter } from '../rig';
 import { SpeechFaceMorphs } from './SpeechFaceMorphs';
+import { gestureNameSchema } from '@digital-human/shared';
+import { VrmPoseConstraints } from './VrmPoseConstraints';
 
 /** Maps semantic pose offsets onto normalized VRM bones and expression binds. */
 export class VrmRigAdapter implements AvatarRigAdapter {
-  readonly supportedGestures = ['nod', 'shake_head', 'wave', 'open_hand', 'shrug'] as const;
+  readonly supportedGestures = gestureNameSchema.options;
   private body = new Map<VRMHumanBoneName, { node: THREE.Object3D; rest: THREE.Euler }>();
   private faceExpressions = new Map<string, string>();
   private faceTextures = new Map<string, string>();
   private weights: Record<string, number> = { aa: 0, ih: 0, ee: 0, oh: 0, ou: 0 };
   private shape: Shape = 'X';
   private opening?: number;
+  private constraints: VrmPoseConstraints;
+  private hips?: { node: THREE.Object3D; rest: THREE.Vector3 };
+  private height: number;
 
   constructor(private vrm: VRM) {
     const left = this.vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
@@ -27,6 +32,7 @@ export class VrmRigAdapter implements AvatarRigAdapter {
     if (left) left.rotation.z = -1.15;
     if (right) right.rotation.z = 1.15;
     const bones: VRMHumanBoneName[] = [
+      'hips',
       'spine',
       'chest',
       'upperChest',
@@ -39,11 +45,25 @@ export class VrmRigAdapter implements AvatarRigAdapter {
       'rightLowerArm',
       'leftHand',
       'rightHand',
+      'leftUpperLeg',
+      'rightUpperLeg',
+      'leftLowerLeg',
+      'rightLowerLeg',
+      'leftFoot',
+      'rightFoot',
     ];
+    for (const side of ['left', 'right'] as const)
+      for (const finger of ['Index', 'Middle', 'Ring', 'Little'] as const)
+        for (const joint of ['Proximal', 'Intermediate', 'Distal'] as const)
+          bones.push(`${side}${finger}${joint}`);
     for (const name of bones) {
       const node = this.vrm.humanoid.getNormalizedBoneNode(name);
       if (node) this.body.set(name, { node, rest: node.rotation.clone() });
     }
+    const hips = this.vrm.humanoid.getNormalizedBoneNode('hips');
+    if (hips) this.hips = { node: hips, rest: hips.position.clone() };
+    this.height = new THREE.Box3().setFromObject(vrm.scene).getSize(new THREE.Vector3()).y;
+    this.constraints = new VrmPoseConstraints(vrm);
     const speechFace = new SpeechFaceMorphs(vrm);
     for (const name of ['happy', 'sad', 'surprised', 'relaxed', 'angry']) {
       const expression = this.vrm.expressionManager?.getExpression(name);
@@ -96,6 +116,11 @@ export class VrmRigAdapter implements AvatarRigAdapter {
         rest.order,
       );
     }
+    if (this.hips) {
+      this.hips.node.position.copy(this.hips.rest);
+      this.hips.node.position.y -= (pose.hipsDrop ?? 0) * this.height;
+    }
+    this.constraints.apply(pose);
 
     const targets: Record<string, number> = { aa: 0, ih: 0, ee: 0, oh: 0, ou: 0 };
     if (this.opening !== undefined) targets.aa = this.opening * vrmTuning.mouthOpeningRatio;

@@ -107,26 +107,43 @@ const mock = createServer(async (req, res) => {
       ? JSON.stringify({ draft: suggestedDraft })
       : isProactive
         ? JSON.stringify([{ phrase: proactiveQuestion, emotion: 'thoughtful', gestures: [] }])
-        : text === 'broken-json'
-          ? brokenReply
-          : text === '八爪魚嘅特徵' &&
-              finalContent.includes('Reply in natural colloquial Hong Kong Cantonese')
-            ? JSON.stringify([
-                {
-                  phrase: cantonese,
-                  emotion: 'neutral',
-                  gestures: [{ name: 'open_hand', strength: 0.5 }],
-                },
-              ])
-            : JSON.stringify([
-                { phrase: 'Hello.', emotion: 'happy', gestures: [{ name: 'wave', strength: 0.4 }] },
-                { phrase: 'I am your digital assistant.', emotion: 'neutral', gestures: [] },
-                {
-                  phrase: 'How can I help you today?',
-                  emotion: 'thoughtful',
-                  gestures: [{ name: 'nod', strength: 0.5 }],
-                },
-              ]);
+        : text === 'pose-reply'
+          ? JSON.stringify([
+              {
+                phrase: 'Here is a dramatic pose.',
+                emotion: 'happy',
+                gestures: [{ name: 'dramatic_lean', strength: 0.9 }],
+              },
+              {
+                phrase: 'I was only helping because I felt like it!',
+                emotion: 'neutral',
+                gestures: [{ name: 'tsundere_turn', strength: 0.9 }],
+              },
+            ])
+          : text === 'broken-json'
+            ? brokenReply
+            : text === '八爪魚嘅特徵' &&
+                finalContent.includes('Reply in natural colloquial Hong Kong Cantonese')
+              ? JSON.stringify([
+                  {
+                    phrase: cantonese,
+                    emotion: 'neutral',
+                    gestures: [{ name: 'open_hand', strength: 0.5 }],
+                  },
+                ])
+              : JSON.stringify([
+                  {
+                    phrase: 'Hello.',
+                    emotion: 'happy',
+                    gestures: [{ name: 'wave', strength: 0.4 }],
+                  },
+                  { phrase: 'I am your digital assistant.', emotion: 'neutral', gestures: [] },
+                  {
+                    phrase: 'How can I help you today?',
+                    emotion: 'thoughtful',
+                    gestures: [{ name: 'nod', strength: 0.5 }],
+                  },
+                ]);
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     if (text === 'slow') await new Promise((r) => setTimeout(r, 1200));
     if (isDraft) await new Promise((resolve) => setTimeout(resolve, 250));
@@ -269,6 +286,28 @@ try {
   await page.getByText('Persona ready', { exact: true }).waitFor({ timeout: 30000 });
   assert.equal(await page.getByRole('combobox', { name: 'Reply language' }).inputValue(), 'auto');
   await page.screenshot({ path: path.join(qa, 'studio-vrm.png'), fullPage: true });
+  await page.getByText('VRM poses · 姿勢', { exact: true }).click();
+  const poseStrength = page.getByRole('slider', { name: 'Pose strength' });
+  await poseStrength.press('End');
+  for (let i = 0; i < 5; i++) await poseStrength.press('ArrowLeft');
+  assert.equal(await poseStrength.inputValue(), '0.75');
+  await page.getByRole('spinbutton', { name: 'Pose hold seconds' }).fill('4.5');
+  await page.getByRole('button', { name: '舉手 · Raise hand', exact: true }).click();
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  assert.equal(
+    await page.locator('.message').count(),
+    0,
+    'Pose preview works before starting a conversation',
+  );
+  await page.screenshot({ path: path.join(qa, 'studio-pose-preview.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Return to idle', exact: true }).click();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await page.getByRole('button', { name: '三七面 · Tsundere turn', exact: true }).click();
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  await page.screenshot({ path: path.join(qa, 'studio-tsundere-preview.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Return to idle', exact: true }).click();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await page.getByText('VRM poses · 姿勢', { exact: true }).click();
   await page.getByRole('button', { name: 'Start conversation', exact: true }).click();
   await page.getByRole('button', { name: 'Introduce yourself', exact: false }).waitFor();
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Hello');
@@ -318,6 +357,7 @@ try {
     await page.getByRole('combobox', { name: 'Choose persona' }).selectOption(id);
     await page.getByText('Persona ready', { exact: true }).waitFor({ timeout: 30000 });
     if (id === 'haru') {
+      assert.equal(await page.getByText('VRM poses · 姿勢', { exact: true }).count(), 0);
       await page.screenshot({ path: path.join(qa, 'studio-live2d.png'), fullPage: true });
       await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Hello again');
       await page.getByRole('button', { name: 'Send message', exact: true }).click();
@@ -337,6 +377,17 @@ try {
   assert.ok(llmLanguages.at(-2)?.includes('Reply in natural colloquial Hong Kong Cantonese'));
   assert.ok(llmLanguages.at(-1)?.includes('Reply in English'));
   assert.ok(llmHistories.some((history) => history.includes(sample)));
+  await page.locator('.speech-toggle').click();
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('pose-reply');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.getByRole('button', { name: 'Replay voice', exact: true }).waitFor({ timeout: 15000 });
+  assert.equal(speechEvents.at(-2).performance.gestures[0].name, 'dramatic_lean');
+  assert.equal(speechEvents.at(-1).performance.gestures[0].name, 'tsundere_turn');
+  assert.equal(
+    (await page.getByText('Here is a dramatic pose.', { exact: false }).count()) > 0,
+    true,
+  );
+  await page.locator('.speech-toggle').click();
   assert.ok(
     llmHistories
       .flat()
@@ -584,6 +635,12 @@ try {
   await page.getByRole('spinbutton', { name: 'Auto reply delay seconds' }).fill('2.5');
   await phraseDelay.fill('0.5');
   await page.reload();
+  await page.getByText('VRM poses · 姿勢', { exact: true }).click();
+  assert.equal(await poseStrength.inputValue(), '0.75');
+  assert.equal(
+    await page.getByRole('spinbutton', { name: 'Pose hold seconds' }).inputValue(),
+    '4.5',
+  );
   await page.getByText('Conversation settings', { exact: true }).click();
   assert.equal(await auto.isChecked(), true);
   assert.equal(await page.getByRole('checkbox', { name: 'Proactive chat' }).isChecked(), true);
@@ -606,6 +663,9 @@ try {
     'Restoring settings does not automatically start a conversation',
   );
   await page.getByRole('button', { name: 'Reset settings', exact: true }).click();
+  assert.equal(await poseStrength.inputValue(), '0.9');
+  assert.equal(await page.getByRole('spinbutton', { name: 'Pose hold seconds' }).inputValue(), '3');
+  await page.getByText('VRM poses · 姿勢', { exact: true }).click();
   assert.equal(await auto.isChecked(), false);
   assert.equal(await display.inputValue(), 'full');
   assert.equal(
@@ -614,6 +674,12 @@ try {
   );
   await page.getByText('Conversation settings', { exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
   await page.screenshot({ path: path.join(qa, 'studio-mobile.png'), fullPage: true });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.deepEqual(errors, []);
@@ -632,6 +698,7 @@ try {
       'phrase bubbles follow audio starts and pause; text pacing supports Stop; replay does not duplicate bubbles',
       'automatic draft-and-send loop obeys limits and yields to typing',
       'browser settings persist across reloads and reset independently',
+      'VRM pose previews work without a conversation, persist controls and accept LLM pose cues',
       'ordered phrases with gesture metadata',
       'typed reply and hidden-reasoning exclusion',
       'automatic ASR and editable transcript',

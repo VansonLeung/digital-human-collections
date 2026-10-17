@@ -32,6 +32,8 @@ test('client preferences retain toggles and parameters without conversation or c
     muted: true,
     language: 'yue' as const,
     idleSeconds: 90,
+    poseStrength: 0.75,
+    poseHoldSeconds: 4,
   };
   saveSettings(store, values);
   assert.deepEqual(loadSettings(store).values, values);

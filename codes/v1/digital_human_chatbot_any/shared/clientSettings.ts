@@ -12,6 +12,8 @@ export const clientSettingsSchema = z.object({
   autoReplyMaxTurns: z.number().int().min(1).max(100).default(5),
   displayMode: z.enum(['full', 'phrases']).default('full'),
   textPhraseDelaySeconds: z.number().min(0.2).max(10).default(0.8),
+  poseStrength: z.number().min(0.2).max(1).default(0.9),
+  poseHoldSeconds: z.number().min(0.5).max(10).default(3),
 });
 
 export type ClientSettings = z.infer<typeof clientSettingsSchema>;
