@@ -49,6 +49,10 @@ const ttsEmotions: string[] = [];
 const llmHistories: string[][] = [];
 const llmRequests: any[] = [];
 const speechEvents: any[] = [];
+const sentCommands: any[] = [];
+const maleSpeechRequests: any[] = [];
+let maleConfigured = true;
+let failMaleSpeech = false;
 const suggestedDraft = 'Tell me more about that.';
 const proactiveQuestion = 'Would you like to explore something else?';
 const brokenReply =
@@ -74,6 +78,7 @@ const mock = createServer(async (req, res) => {
         busy: false,
         voices: ['ryan', 'vivian'],
         languages: ['english', 'chinese', 'cantonese'],
+        voice_profiles: { user_male: { configured: maleConfigured } },
       }),
     );
     return;
@@ -91,6 +96,7 @@ const mock = createServer(async (req, res) => {
         .map((message: any) => message.content),
     );
     const isDraft = input.messages[0].content.includes('FROM THE USER');
+    const isSpoken = finalContent.includes('SPOKEN USER MESSAGE FORMAT');
     if (isDraft) {
       draftCalls++;
       assert.equal(input.messages.at(-1).role, 'user');
@@ -103,50 +109,52 @@ const mock = createServer(async (req, res) => {
       assert.equal(input.messages.at(-1).role, 'user');
       assert.match(input.messages.at(-1).content, /user is quiet/);
     }
-    const reply = isDraft
-      ? JSON.stringify({ draft: suggestedDraft })
-      : isProactive
-        ? JSON.stringify([{ phrase: proactiveQuestion, emotion: 'thoughtful', gestures: [] }])
-        : text === 'pose-reply'
-          ? JSON.stringify([
-              {
-                phrase: 'Here is a dramatic pose.',
-                emotion: 'happy',
-                gestures: [{ name: 'dramatic_lean', strength: 0.9 }],
-              },
-              {
-                phrase: 'I was only helping because I felt like it!',
-                emotion: 'neutral',
-                gestures: [{ name: 'tsundere_turn', strength: 0.9 }],
-              },
-            ])
-          : text === 'broken-json'
-            ? brokenReply
-            : text === '八爪魚嘅特徵' &&
-                finalContent.includes('Reply in natural colloquial Hong Kong Cantonese')
-              ? JSON.stringify([
-                  {
-                    phrase: cantonese,
-                    emotion: 'neutral',
-                    gestures: [{ name: 'open_hand', strength: 0.5 }],
-                  },
-                ])
-              : JSON.stringify([
-                  {
-                    phrase: 'Hello.',
-                    emotion: 'happy',
-                    gestures: [{ name: 'wave', strength: 0.4 }],
-                  },
-                  { phrase: 'I am your digital assistant.', emotion: 'neutral', gestures: [] },
-                  {
-                    phrase: 'How can I help you today?',
-                    emotion: 'thoughtful',
-                    gestures: [{ name: 'nod', strength: 0.5 }],
-                  },
-                ]);
+    const reply = isSpoken
+      ? JSON.stringify({ phrases: ['First spoken phrase.', 'Second spoken phrase.'] })
+      : isDraft
+        ? JSON.stringify({ draft: suggestedDraft })
+        : isProactive
+          ? JSON.stringify([{ phrase: proactiveQuestion, emotion: 'thoughtful', gestures: [] }])
+          : text === 'pose-reply'
+            ? JSON.stringify([
+                {
+                  phrase: 'Here is a dramatic pose.',
+                  emotion: 'happy',
+                  gestures: [{ name: 'dramatic_lean', strength: 0.9 }],
+                },
+                {
+                  phrase: 'I was only helping because I felt like it!',
+                  emotion: 'neutral',
+                  gestures: [{ name: 'tsundere_turn', strength: 0.9 }],
+                },
+              ])
+            : text === 'broken-json'
+              ? brokenReply
+              : text === '八爪魚嘅特徵' &&
+                  finalContent.includes('Reply in natural colloquial Hong Kong Cantonese')
+                ? JSON.stringify([
+                    {
+                      phrase: cantonese,
+                      emotion: 'neutral',
+                      gestures: [{ name: 'open_hand', strength: 0.5 }],
+                    },
+                  ])
+                : JSON.stringify([
+                    {
+                      phrase: 'Hello.',
+                      emotion: 'happy',
+                      gestures: [{ name: 'wave', strength: 0.4 }],
+                    },
+                    { phrase: 'I am your digital assistant.', emotion: 'neutral', gestures: [] },
+                    {
+                      phrase: 'How can I help you today?',
+                      emotion: 'thoughtful',
+                      gestures: [{ name: 'nod', strength: 0.5 }],
+                    },
+                  ]);
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     if (text === 'slow') await new Promise((r) => setTimeout(r, 1200));
-    if (isDraft) await new Promise((resolve) => setTimeout(resolve, 250));
+    if (isDraft) await new Promise((resolve) => setTimeout(resolve, isSpoken ? 1200 : 500));
     if (!res.destroyed) {
       res.write(
         `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'hidden' } }] })}\n\n`,
@@ -162,7 +170,13 @@ const mock = createServer(async (req, res) => {
     return;
   }
   if (req.url === '/v1/audio/speech') {
-    const { text, emotion } = JSON.parse(body);
+    const { text, emotion, profile } = JSON.parse(body);
+    if (profile === 'user_male') maleSpeechRequests.push({ text, profile });
+    if (profile === 'user_male' && failMaleSpeech && text === 'Second spoken phrase.') {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Synthetic TTS failure' }));
+      return;
+    }
     assert.ok(!/<\/?(?:gesture|emotion)\b|"phrase"\s*:|"gestures"\s*:/.test(text));
     ttsTexts.push(text);
     ttsEmotions.push(emotion);
@@ -261,12 +275,13 @@ const context = await browser.newContext({
 const page = await context.newPage();
 
 const errors: string[] = [];
-page.on('websocket', (socket) =>
+page.on('websocket', (socket) => {
+  socket.on('framesent', ({ payload }) => sentCommands.push(JSON.parse(payload.toString())));
   socket.on('framereceived', ({ payload }) => {
     const event = JSON.parse(payload.toString());
     if (event.type === 'speech.ready') speechEvents.push(event);
-  }),
-);
+  });
+});
 
 page.on('pageerror', (e) => {
   errors.push(e.message);
@@ -599,6 +614,12 @@ try {
   const draftsBeforeAuto = draftCalls;
   await composer.fill('Start an automatic conversation');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.getByRole('status', { name: 'Your automatic reply is typing', exact: true }).waitFor();
+  assert.equal(await page.locator('.auto-reply-typing .thinking i').count(), 3);
+  assert.equal(
+    await page.getByRole('textbox', { name: 'Spoken phrase 1', exact: true }).count(),
+    0,
+  );
   await page.getByText('2/2 sent · limit reached', { exact: true }).waitFor({ timeout: 12000 });
   assert.equal(draftCalls - draftsBeforeAuto, 2);
   assert.equal(await page.locator('.message.user .bubble').count(), 3);
@@ -672,6 +693,173 @@ try {
     await page.getByRole('spinbutton', { name: 'Auto reply turn limit' }).inputValue(),
     '5',
   );
+
+  // Both user-side generators share a queue; only a completed queue sends a turn.
+  await page.getByRole('button', { name: 'Start conversation', exact: true }).click();
+  await page.getByRole('button', { name: 'Introduce yourself', exact: false }).waitFor();
+  await page.locator('.speech-toggle').click();
+  const manualMode = page.getByRole('combobox', { name: 'Manual message mode' });
+  const autoMode = page.getByRole('combobox', { name: 'Auto reply mode' });
+  await manualMode.selectOption('spoken');
+  const originalMessage = 'I am tired, but I would like to keep chatting.';
+  await composer.fill(originalMessage);
+  await page.getByRole('button', { name: 'Prepare spoken message', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Spoken phrase 1', exact: true }).waitFor();
+  assert.equal(await composer.inputValue(), originalMessage);
+  assert.equal(await page.locator('.message.user').count(), 0);
+  await page
+    .getByRole('textbox', { name: 'Spoken phrase 1', exact: true })
+    .fill('Edited first phrase.');
+  await page.screenshot({ path: path.join(qa, 'studio-user-speech-preview.png'), fullPage: true });
+  const beforeManual = sentCommands.filter((command) => command.type === 'turn.send').length;
+  const llmBeforeManualSpeech = llmRequests.length;
+  await page.getByRole('button', { name: 'Speak & send', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.message.user').length === 1);
+  assert.equal(sentCommands.filter((command) => command.type === 'turn.send').length, beforeManual);
+  await page.getByRole('button', { name: 'Pause speech', exact: true }).click();
+  await page.getByRole('button', { name: 'Resume speech', exact: true }).waitFor();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.equal(await page.locator('.message.user').count(), 1);
+  assert.equal(llmRequests.length, llmBeforeManualSpeech, 'Mira must wait for the male voice');
+  await page.getByRole('button', { name: 'Resume speech', exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelectorAll('.message.assistant').length === 1,
+    null,
+    { timeout: 25000 },
+  );
+  await page.getByRole('button', { name: 'Prepare spoken message', exact: true }).waitFor();
+  assert.equal(
+    sentCommands.filter((command) => command.type === 'turn.send').length,
+    beforeManual + 1,
+  );
+  assert.equal(await page.locator('.message.user').count(), 2, 'No extra combined user bubble');
+  assert.deepEqual(
+    maleSpeechRequests.slice(-2).map((request) => request.text),
+    ['Edited first phrase.', 'Second spoken phrase.'],
+  );
+  assert.equal(
+    sentCommands.filter((command) => command.type === 'turn.send').at(-1).text,
+    'Edited first phrase. Second spoken phrase.',
+  );
+  assert.equal(await composer.inputValue(), '');
+
+  await composer.fill(originalMessage);
+  await page.getByRole('button', { name: 'Prepare spoken message', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Spoken phrase 1', exact: true }).waitFor();
+  const beforeStop = sentCommands.filter((command) => command.type === 'turn.send').length;
+  await page.getByRole('button', { name: 'Speak & send', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.message.user').length === 3);
+  await page.getByRole('button', { name: 'Stop response', exact: true }).click();
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.equal(sentCommands.filter((command) => command.type === 'turn.send').length, beforeStop);
+  assert.equal(await composer.inputValue(), originalMessage);
+  assert.ok((await page.locator('.message.user').last().innerText()).includes('Not sent'));
+  assert.equal(
+    await page.getByRole('textbox', { name: 'Spoken phrase 1', exact: true }).isEnabled(),
+    true,
+  );
+
+  failMaleSpeech = true;
+  await page.getByRole('button', { name: 'Speak & send', exact: true }).click();
+  await page.getByRole('alert').waitFor();
+  assert.equal(sentCommands.filter((command) => command.type === 'turn.send').length, beforeStop);
+  assert.equal(await composer.inputValue(), originalMessage);
+  assert.equal(
+    await page.getByRole('textbox', { name: 'Spoken phrase 1', exact: true }).isEnabled(),
+    true,
+  );
+  failMaleSpeech = false;
+  await page.getByRole('button', { name: 'Dismiss error', exact: true }).click();
+
+  maleConfigured = false;
+  await page.getByTitle('Refresh service readiness').click();
+  await page.waitForFunction(() =>
+    document
+      .querySelector('.user-speech-preview')
+      ?.textContent?.includes('Configure a male reference voice'),
+  );
+  assert.equal(
+    await page.getByRole('button', { name: 'Speak & send', exact: true }).isDisabled(),
+    true,
+  );
+  maleConfigured = true;
+  await page.getByTitle('Refresh service readiness').click();
+  await page.getByRole('button', { name: 'Clear conversation', exact: true }).click();
+  await manualMode.selectOption('text');
+  await autoMode.selectOption('spoken');
+  await page.getByRole('spinbutton', { name: 'Auto reply delay seconds' }).fill('1');
+  await page.getByRole('spinbutton', { name: 'Auto reply turn limit' }).fill('1');
+  await auto.check();
+  const beforeAutoSpoken = sentCommands.filter((command) => command.type === 'turn.send').length;
+  await composer.fill('Start a spoken automatic conversation');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page
+    .getByRole('status', { name: 'Your automatic reply is typing', exact: true })
+    .waitFor({ timeout: 10000 });
+  assert.equal(await page.locator('.auto-reply-typing .thinking i').count(), 3);
+  assert.equal(await page.locator('.user-speech-preview').count(), 0);
+  assert.equal(
+    await page.getByRole('textbox', { name: 'Spoken phrase 1', exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    sentCommands.filter((command) => command.type === 'turn.send').length,
+    beforeAutoSpoken + 1,
+  );
+  await page.screenshot({ path: path.join(qa, 'studio-auto-reply-typing.png'), fullPage: true });
+  await page.waitForFunction(
+    () => document.querySelectorAll('.message.user:not(.auto-reply-typing)').length === 2,
+  );
+  assert.equal(
+    await page.getByRole('status', { name: 'Your automatic reply is typing', exact: true }).count(),
+    0,
+  );
+  assert.equal(await page.locator('.user-speech-preview').count(), 0);
+  await page.getByText('1/1 sent · limit reached', { exact: true }).waitFor({ timeout: 30000 });
+  assert.equal(
+    sentCommands.filter((command) => command.type === 'turn.send').length,
+    beforeAutoSpoken + 2,
+  );
+  assert.equal(await page.locator('.message.user').count(), 3);
+  assert.equal(
+    sentCommands.filter((command) => command.type === 'turn.send').at(-1).text,
+    'First spoken phrase. Second spoken phrase.',
+  );
+  const beforeCancelledAutoSpeech = sentCommands.filter(
+    (command) => command.type === 'turn.send',
+  ).length;
+  await page.getByRole('button', { name: 'Resume auto replies', exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelectorAll('.message.user:not(.auto-reply-typing)').length === 4,
+  );
+  await page.getByRole('button', { name: 'Stop response', exact: true }).click();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(
+    sentCommands.filter((command) => command.type === 'turn.send').length,
+    beforeCancelledAutoSpeech,
+  );
+  assert.equal(
+    await page.locator('.user-speech-preview').count(),
+    0,
+    'Stopping an automatic reply must not open a review editor',
+  );
+  assert.equal(
+    await page.getByRole('status', { name: 'Your automatic reply is typing', exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await page.getByRole('button', { name: 'Resume auto replies', exact: true }).isEnabled(),
+    true,
+  );
+  await page.getByRole('button', { name: 'Clear conversation', exact: true }).click();
+  await manualMode.selectOption('spoken');
+  await page.reload();
+  assert.equal(await manualMode.inputValue(), 'spoken');
+  await page.getByText('Conversation settings', { exact: true }).click();
+  assert.equal(await autoMode.inputValue(), 'spoken');
+  await page.getByRole('button', { name: 'Reset settings', exact: true }).click();
+  assert.equal(await manualMode.inputValue(), 'text');
+  assert.equal(await autoMode.inputValue(), 'text');
   await page.getByText('Conversation settings', { exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(
@@ -697,6 +885,11 @@ try {
       'raw response and exact LLM request body can be inspected and downloaded without credentials',
       'phrase bubbles follow audio starts and pause; text pacing supports Stop; replay does not duplicate bubbles',
       'automatic draft-and-send loop obeys limits and yields to typing',
+      'manual spoken rewrite preview preserves original text and speaks edited phrases',
+      'male voice phrase bubbles pause and commit exactly once after playback',
+      'Stop retains the draft and prevents submission; missing male voice disables playback',
+      'automatic spoken replies share the queue and persist independent mode preferences',
+      'automatic replies use animated typing dots without revealing the phrase editor, including after Stop',
       'browser settings persist across reloads and reset independently',
       'VRM pose previews work without a conversation, persist controls and accept LLM pose cues',
       'ordered phrases with gesture metadata',

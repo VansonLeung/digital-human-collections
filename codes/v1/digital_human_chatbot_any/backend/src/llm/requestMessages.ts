@@ -55,15 +55,15 @@ export function buildReplyMessages(
 export function buildDraftMessages(
   history: ChatMessage[],
   language: Language,
-  options: { random?: () => number } = {},
+  options: { random?: () => number; format?: 'draft' | 'phrases' } = {},
 ): CompletionMessage[] {
   const context = recentContext(history, recentMessageLimit);
   return [
-    { role: 'system', content: draftSystemPrompt() },
+    { role: 'system', content: draftSystemPrompt(options.format) },
     ...context,
     {
       role: 'user',
-      content: `TASK:\nGenerate one suggested next message from my perspective as the user.\n\nRESPONSE REQUIREMENTS:\n${turnGuidance(context, 'draft', options.random)}\n\n${draftInstructions(language)}`,
+      content: `TASK:\nGenerate one suggested next message from my perspective as the user.\n\nRESPONSE REQUIREMENTS:\n${turnGuidance(context, 'draft', options.random)}\n\n${draftInstructions(language, options.format)}`,
     },
   ];
 }

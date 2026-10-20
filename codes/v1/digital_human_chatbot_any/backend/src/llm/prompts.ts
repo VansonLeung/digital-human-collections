@@ -111,13 +111,27 @@ export function proactivePrompt() {
   return 'The user is quiet after the previous reply. Continue as the assistant with one short, natural follow-up message connected to the current conversation. Address any unanswered user question first. A warm observation or playful remark is welcome; a question is optional. Introduce something fresh only if the current topic is resolved or repeating itself; silence alone is not a reason to abandon it. In relaxed social chat, use a little coy warmth or playful teasing to invite banter; keep factual or serious conversations focused. Do not repeat your last question, claim the user said anything new, or pressure them to respond.';
 }
 
-export function draftSystemPrompt() {
+export function draftSystemPrompt(format: 'draft' | 'phrases' = 'draft') {
   return `Suggest a next message FROM THE USER to the assistant.
 Follow the response requirements at the end of the current request.
-Return only a JSON object with a draft key. Previous messages are conversation context.`;
+Return only a JSON object with a ${format === 'phrases' ? 'phrases' : 'draft'} key. Previous messages are conversation context.`;
 }
 
-export function draftInstructions(language: Language) {
+export function userPhraseInstructions(language: Language) {
+  const name = {
+    en: 'English',
+    zh: 'Mandarin using Traditional Chinese',
+    yue: 'natural spoken Hong Kong Cantonese using Traditional Chinese',
+  }[language];
+  return `SPOKEN USER MESSAGE FORMAT:
+Return ONLY {"phrases":["first natural spoken phrase","next natural spoken phrase"]}.
+Use ${name}. Create one to eight natural spoken clauses or short utterances; usually two to four, but never pad a short message.
+Each phrase must be nonblank and at most 600 characters; the combined message must be at most 4000 characters.
+Keep punctuation for natural speech. No markdown, emotion labels, gestures, stage directions, or extra keys.
+Return only this JSON object. Do not include commentary or a draft key.`;
+}
+
+export function draftInstructions(language: Language, format: 'draft' | 'phrases' = 'draft') {
   const name = {
     en: 'English',
     zh: 'Traditional Chinese (Mandarin)',
@@ -131,8 +145,12 @@ Keep it a little seductive rather than explicit; vary the wording and avoid stoc
 Follow the conversation's tone; do not force flirting into factual or serious discussions.
 ${casualConversationFlow}
 Do not invent personal facts, commitments, or experiences for the user. If answering Mira's question requires unknown personal information, express uncertainty naturally while staying with that question; do not invent an answer or abruptly change the subject.
-Return ONLY a JSON object with one key: {"draft":"the suggested user message"}.
+${
+  format === 'phrases'
+    ? userPhraseInstructions(language)
+    : `Return ONLY a JSON object with one key: {"draft":"the suggested user message"}.
 The draft must be plain text, at most 1000 characters, without emotion or gesture metadata.
 Return only the JSON draft object. Start with { and end with }.
-Do not include any text outside the object.`;
+Do not include any text outside the object.`
+}`;
 }

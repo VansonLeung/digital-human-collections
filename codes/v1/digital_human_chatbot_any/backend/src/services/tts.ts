@@ -20,6 +20,7 @@ export async function synthesize(
   language: Language,
   parent: AbortSignal,
   emotion: Emotion = 'neutral',
+  profile?: 'user_male',
 ) {
   if (language === 'yue' && config.CANTONESE_TTS_ENABLED !== 'true')
     throw new Error(
@@ -38,7 +39,13 @@ export async function synthesize(
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: speechText(text), voice, language: lang, emotion }),
+      body: JSON.stringify({
+        text: speechText(text),
+        voice,
+        language: lang,
+        emotion,
+        ...(profile ? { profile } : {}),
+      }),
       signal: stageSignal(parent, config.SPEECH_TIMEOUT_SECONDS),
     },
     'TTS',

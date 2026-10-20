@@ -4,6 +4,7 @@ import { phrasePerformanceSchema } from './performance.js';
 export * from './performance.js';
 export * from './llmReply.js';
 export * from './clientSettings.js';
+export * from './userSpeech.js';
 
 export const languageSchema = z.enum(['en', 'zh', 'yue']);
 
@@ -48,6 +49,7 @@ export const commandSchema = z.discriminatedUnion('type', [
     personaId: z.string().min(1).max(80),
     language: replyLanguageSchema,
     speech: z.boolean().default(true),
+    expectedRevision: z.number().int().nonnegative().optional(),
   }),
   z.object({ type: z.literal('turn.stop'), turnId: z.string().optional() }),
   z.object({ type: z.literal('session.reset') }),
@@ -97,6 +99,7 @@ export type ComponentHealth = {
   languages?: string[];
   voices?: string[];
   detail?: string;
+  voiceProfiles?: Record<string, { configured: boolean }>;
 };
 
 export type Health = {

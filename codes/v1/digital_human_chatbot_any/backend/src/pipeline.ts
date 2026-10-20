@@ -35,6 +35,7 @@ export async function runTurn(
       !session.proactive.eligible ||
       session.active ||
       session.suggestion ||
+      session.userSpeech ||
       session.transcription ||
       command.revision !== session.revision ||
       Date.now() - session.proactive.lastActivity < session.proactive.delaySeconds * 1000 ||
@@ -44,6 +45,20 @@ export async function runTurn(
     return;
   }
   if (!proactive && session.active?.origin === 'proactive') session.stop();
+  if (
+    !proactive &&
+    command.expectedRevision !== undefined &&
+    command.expectedRevision !== session.revision
+  ) {
+    session.send({
+      type: 'error',
+      stage: 'session',
+      message:
+        'The conversation changed before your spoken message was sent. Review it and try again.',
+      retryable: false,
+    });
+    return;
+  }
   if (session.active) {
     session.send({
       type: 'error',
@@ -71,6 +86,7 @@ export async function runTurn(
     origin: proactive ? 'proactive' : 'user',
   };
   session.suggestion?.abort();
+  session.userSpeech?.abort();
   if (proactive) session.proactive.eligible = false;
   else {
     session.revision++;

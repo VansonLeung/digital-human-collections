@@ -6,6 +6,7 @@ import io
 from pathlib import Path
 import sys
 import threading
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -143,6 +144,32 @@ class ASRAPITests(unittest.TestCase):
 
 
 class TTSAPITests(unittest.TestCase):
+    def test_reference_profiles_share_model_and_missing_male_profile_is_explicit(self):
+        engine = FakeTTS()
+        with tempfile.TemporaryDirectory() as directory:
+            female = Path(directory) / "female.wav"
+            male = Path(directory) / "male.wav"
+            female.write_bytes(wav_bytes())
+            male.write_bytes(wav_bytes())
+            settings = TTSSettings(ref_audio=str(female), ref_text="Female reference",
+                                   user_male_ref_audio=str(male), user_male_ref_text="Male reference")
+            with TestClient(tts_app(settings, engine)) as client:
+                self.assertTrue(client.get("/health").json()["voice_profiles"]["user_male"]["configured"])
+                self.assertEqual(client.post("/v1/audio/speech", json={"text": "First", "profile": "user_male"}).status_code, 200)
+                self.assertEqual(engine.kwargs["ref_audio"], str(male))
+                self.assertEqual(engine.kwargs["ref_text"], "Male reference")
+                self.assertIsNone(engine.kwargs["voice"])
+                self.assertEqual(client.post("/v1/audio/speech", json={"text": "Second"}).status_code, 200)
+                self.assertEqual(engine.kwargs["ref_audio"], str(female))
+                self.assertEqual(engine.kwargs["ref_text"], "Female reference")
+                self.assertEqual(client.post("/v1/audio/speech", json={"text": "Hi", "profile": "unknown"}).status_code, 422)
+            self.assertEqual(engine.loads, 1)
+        with TestClient(tts_app(TTSSettings(), FakeTTS())) as client:
+            self.assertFalse(client.get("/health").json()["voice_profiles"]["user_male"]["configured"])
+            result = client.post("/v1/audio/speech", json={"text": "Hello", "profile": "user_male"})
+            self.assertEqual(result.status_code, 422)
+            self.assertIn("TTS_USER_MALE_REF_AUDIO", result.json()["detail"])
+
     def test_emotion_capability_distinguishes_cloning_from_instruction_control(self):
         for model_id, expected in [
             ("mlx-community/VoxCPM2-8bit", "supported"),

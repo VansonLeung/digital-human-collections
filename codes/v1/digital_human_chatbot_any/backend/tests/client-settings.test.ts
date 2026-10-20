@@ -26,6 +26,8 @@ test('client preferences retain toggles and parameters without conversation or c
   const values = {
     ...defaultClientSettings,
     autoReplyEnabled: true,
+    autoReplyMode: 'spoken' as const,
+    manualMessageMode: 'spoken' as const,
     autoReplyDelaySeconds: 2,
     autoReplyMaxTurns: 7,
     displayMode: 'phrases' as const,

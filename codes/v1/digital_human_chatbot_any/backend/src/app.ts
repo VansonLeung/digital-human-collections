@@ -16,6 +16,7 @@ import { resolveLanguage } from './services/language.js';
 import { suggestReply } from './llm/replySuggestion.js';
 import { ReplyFormatError } from './llm/JsonReplyParser.js';
 import { saveReplyDiagnostic } from './llm/diagnostics.js';
+import { registerUserSpeechRoutes } from './userSpeechRoutes.js';
 
 export async function serviceHealth(url: string): Promise<ComponentHealth> {
   try {
@@ -35,6 +36,9 @@ export async function serviceHealth(url: string): Promise<ComponentHealth> {
         ? data.languages.filter((x) => typeof x === 'string')
         : [],
       voices: Array.isArray(data.voices) ? data.voices.filter((x) => typeof x === 'string') : [],
+      voiceProfiles: z
+        .record(z.string(), z.object({ configured: z.boolean() }))
+        .safeParse(data.voice_profiles).data,
     };
   } catch {
     return { status: 'unavailable', detail: 'Service is not reachable or not ready.' };
@@ -74,6 +78,7 @@ export async function createApplication(config: Config) {
     next();
   });
   app.use(express.json({ limit: '32kb' }));
+  registerUserSpeechRoutes(app, config, sessions, media);
   app.get('/api/health', async (_req, res) => {
     const [asr, tts, lipsync] = await Promise.all([
       serviceHealth(config.ASR_BASE_URL),
@@ -125,6 +130,7 @@ export async function createApplication(config: Config) {
     if (
       session.active ||
       session.suggestion ||
+      session.userSpeech ||
       session.transcription ||
       parsed.data.revision !== session.revision ||
       !session.history.length
@@ -184,7 +190,7 @@ export async function createApplication(config: Config) {
     (req, res, next) => {
       const session = sessions.get(String(req.params.id));
       if (!session) return res.status(404).json({ error: 'Session expired.' });
-      if (session.active || session.transcription || session.suggestion)
+      if (session.active || session.transcription || session.suggestion || session.userSpeech)
         return res.status(409).json({ error: 'Finish or stop the current task first.' });
       next();
     },
@@ -192,7 +198,7 @@ export async function createApplication(config: Config) {
     async (req, res, next) => {
       const session = sessions.get(String(req.params.id));
       if (!session) return res.status(404).json({ error: 'Session expired.' });
-      if (session.active || session.transcription || session.suggestion)
+      if (session.active || session.transcription || session.suggestion || session.userSpeech)
         return res.status(409).json({ error: 'Finish or stop the current task first.' });
       if (!req.file) return res.status(422).json({ error: 'An audio recording is required.' });
       const parsed = replyLanguageSchema.safeParse(req.body.language);

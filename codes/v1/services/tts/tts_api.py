@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path
 import time
+from typing import Literal
 
 from dotenv import dotenv_values
 from fastapi import FastAPI, HTTPException, Response
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from stream_audio import TTSEngine
 from emotions import Emotion, speech_instruction
+from voice_profiles import VoiceProfile
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,9 @@ class Settings:
     voice_style: str = ""
     ref_audio: str | None = "./speaker.wav"
     ref_text: str | None = "你睇吓你，功課又唔做，考試淨係識得出貓"
+    user_male_ref_audio: str | None = "./user-male.wav"
+    user_male_ref_text: str | None = "Hi, Mira. It's nice to hear your voice. I've had a long day, but I'd like to stay and chat for a little while."
+    user_male_voice_style: str = ""
 
     def __post_init__(self):
         if min(self.max_text_chars, self.max_audio_seconds, self.max_tokens) <= 0:
@@ -55,6 +60,9 @@ class Settings:
             voice_style=env.get("TTS_VOICE_STYLE", defaults.voice_style),
             ref_audio=env.get("TTS_REF_AUDIO", defaults.ref_audio) or None,
             ref_text=env.get("TTS_REF_TEXT", defaults.ref_text) or None,
+            user_male_ref_audio=env.get("TTS_USER_MALE_REF_AUDIO", defaults.user_male_ref_audio) or None,
+            user_male_ref_text=env.get("TTS_USER_MALE_REF_TEXT", defaults.user_male_ref_text) or None,
+            user_male_voice_style=env.get("TTS_USER_MALE_VOICE_STYLE", defaults.user_male_voice_style),
         )
 
 
@@ -64,6 +72,7 @@ class SpeechRequest(BaseModel):
     language: str | None = Field(None, max_length=100)
     instruct: str | None = Field(None, max_length=1000)
     emotion: Emotion | None = None
+    profile: Literal["mira", "user_male"] | None = None
 
     class Config:
         extra = "forbid"
@@ -72,9 +81,11 @@ class SpeechRequest(BaseModel):
 def create_app(settings=None, engine=None):
     settings = settings or Settings.from_env()
     engine = engine or TTSEngine(settings.model_id)
-    ref_audio = settings.ref_audio
-    if ref_audio and not Path(ref_audio).is_absolute():
-        ref_audio = str(Path(__file__).parent / ref_audio)
+    profiles = {
+        "mira": VoiceProfile(settings.ref_audio, settings.ref_text, settings.voice_style),
+        "user_male": VoiceProfile(settings.user_male_ref_audio, settings.user_male_ref_text,
+                                  settings.user_male_voice_style),
+    }
     gate = asyncio.Lock()
 
     @asynccontextmanager
@@ -96,6 +107,8 @@ def create_app(settings=None, engine=None):
         return {"status": "ready" if app.state.ready else "starting",
                 "model": settings.model_id, "busy": gate.locked(),
                 "voices": engine.voices, "languages": engine.languages,
+                "voice_profiles": {name: {"configured": profile.configured}
+                                   for name, profile in profiles.items()},
                 "emotion_control": getattr(engine, "emotion_control", "unknown")}
 
     @app.post("/v1/audio/speech", responses={200: {"content": {"audio/wav": {}}}},
@@ -104,6 +117,9 @@ def create_app(settings=None, engine=None):
         text = request.text.strip()
         if not text or len(text) > settings.max_text_chars:
             raise HTTPException(422, "Text must be nonblank and within TTS_MAX_TEXT_CHARS.")
+        profile = profiles[request.profile or "mira"]
+        if request.profile == "user_male" and not profile.configured:
+            raise HTTPException(422, "Configure TTS_USER_MALE_REF_AUDIO and TTS_USER_MALE_REF_TEXT, then restart the TTS service.")
         if gate.locked():
             raise HTTPException(429, "TTS is busy; retry when the current request completes.",
                                 headers={"Retry-After": "1"})
@@ -115,11 +131,11 @@ def create_app(settings=None, engine=None):
                         settings.model_id,
                     )
                 return engine.synthesize(
-                    text, voice=(request.voice or settings.voice) if engine.voices else None,
+                    text, voice=(request.voice or settings.voice) if engine.voices and request.profile != "user_male" else None,
                     language=request.language or settings.language,
-                    ref_audio=ref_audio, ref_text=settings.ref_text,
+                    ref_audio=profile.audio_path, ref_text=profile.ref_text,
                     instruct=speech_instruction(
-                        request.emotion, settings.voice_style, request.instruct,
+                        request.emotion, profile.style, request.instruct,
                     ),
                     max_tokens=settings.max_tokens,
                     max_audio_seconds=settings.max_audio_seconds,

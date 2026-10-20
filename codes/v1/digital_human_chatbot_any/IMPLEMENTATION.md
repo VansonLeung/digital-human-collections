@@ -273,6 +273,59 @@ Known local asset limitation: Ren uses MOC version 6 and offscreen rendering, wh
 
 ## Configuration and language behavior
 
+### Spoken user messages
+
+The composer offers **Send as typed** and **Rewrite & speak · male voice**.
+The latter prepares a complete, validated phrase list, preserves the original
+composer text, and shows editable phrase fields before **Speak & send**.
+The rewrite prompt preserves meaning, tone, questions, negations, and named
+details; it is separate from the creative automatic-draft prompt.
+
+**Conversation settings → Automatic reply mode → Phrase bubbles & male voice**
+uses the same queue without the manual review step. Both mode selections are
+remembered in browser settings. Existing text modes remain the defaults.
+Automatic replies show the same animated typing dots as Mira in a user-side
+bubble while drafting and preparing the first audio phrase. They never show
+the phrase editor, including after Stop or an error. Spoken phrase bubbles
+appear only when their audio starts. Manual rewrites keep the editable preview.
+
+`useUserMessageSpeech.ts` and `UserMessageSpeechController.ts` share preparation,
+serial phrase synthesis, audio-clock playback, cancellation, and cleanup.
+`SpeechQueuePlayer` has no avatar callbacks for this user-side queue. Phrase
+bubbles appear when their audio starts, marked not yet sent. Only a fully
+completed queue submits one joined user message to Mira. Stop, synthesis or
+playback failure, hidden tabs, disconnection, changed input/language/persona,
+or a changed conversation revision prevents submission. Interrupted bubbles
+are marked **Not sent** and an unchanged manual draft/preview remains editable.
+Pause/Resume and mute apply to the active speaker; Mira starts only after the
+male voice finishes. The backend also rejects stale revision submissions.
+
+The preparation endpoint `/api/sessions/:id/user-message/prepare` returns
+`{phrases: string[], language, revision}` and does not synthesize or modify
+history. `/user-message/speech` synthesizes one validated phrase with the
+server-selected `user_male` profile. Audio URLs are session-scoped, deleted
+after playback/cancellation when known, and expire through existing media
+cleanup. LLM failures preserve the raw output and exact request diagnostics.
+
+Configure these in **`codes/v1/services/tts/.env`**, then restart the TTS service
+and refresh service readiness in the app:
+
+```dotenv
+TTS_USER_MALE_REF_AUDIO=./user-male.wav
+TTS_USER_MALE_REF_TEXT=The exact words spoken in that recording.
+TTS_USER_MALE_VOICE_STYLE=
+```
+
+Paths resolve against the TTS service directory. The male recording and its
+transcript are supplied by the user; until configured, the app shows a setup
+message and disables manual playback. `voice_profiles.py` selects per-request
+references without mutating the original Mira reference or loading another
+model. Requests without a profile retain their existing voice behavior.
+Qwen3 Base follows reference audio; style instructions are still carried for
+models that support them. Profile health reports configuration, not voice
+quality. Real male-voice quality needs a listening check after adding the
+reference. Cantonese speech still respects the app's voice-validation setting.
+
 ### Request prompt layout
 
 Each request includes **CURRENT TURN GUIDANCE** before the final language and

@@ -42,13 +42,15 @@ export function useAutoReply(options: {
     setEpoch((value) => value + 1);
   }
   useEffect(() => {
-    const activity = () => {
+    const activity = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest('[data-auto-reply-control]'))
+        return;
       if (latest.current.enabled) pause();
     };
     document.addEventListener('keydown', activity, true);
     document.addEventListener('pointerdown', activity, true);
     const visibility = () => {
-      if (document.hidden) activity();
+      if (document.hidden && latest.current.enabled) pause();
     };
     document.addEventListener('visibilitychange', visibility);
     return () => {

@@ -23,6 +23,7 @@ export class Session {
   language: Language = 'en';
   revision = 0;
   suggestion?: AbortController;
+  userSpeech?: AbortController;
   diagnostics: ReplyDiagnostic[] = [];
   proactive = { enabled: false, delaySeconds: 60, eligible: false, lastActivity: Date.now() };
 
@@ -64,6 +65,7 @@ export class Session {
 
   stop() {
     this.suggestion?.abort();
+    this.userSpeech?.abort();
     this.proactive.eligible = false;
     const turn = this.active;
     if (!turn) return;

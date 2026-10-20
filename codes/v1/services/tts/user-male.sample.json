@@ -1,0 +1,12 @@
+{
+  "model": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit",
+  "speaker": "Aiden",
+  "language": "english",
+  "transcript": "Hi, Mira. It's nice to hear your voice. I've had a long day, but I'd like to stay and chat for a little while.",
+  "sample_rate": 24000,
+  "channels": 1,
+  "duration_seconds": 7.52,
+  "peak": 0.4266,
+  "rms": 0.0794,
+  "transcript_verified_with_asr": true
+}

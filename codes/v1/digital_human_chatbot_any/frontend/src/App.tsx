@@ -34,6 +34,9 @@ import { PoseControls } from './components/PoseControls';
 import { useSettings } from './hooks/useSettings';
 import { useAutoReply } from './hooks/useAutoReply';
 import { usePhraseDisplay } from './hooks/usePhraseDisplay';
+import { useUserMessageSpeech } from './hooks/useUserMessageSpeech';
+import { UserMessageSpeechControls } from './components/UserMessageSpeechControls';
+import { TypingIndicator } from './components/TypingIndicator';
 
 type Message = {
   id: string;
@@ -42,6 +45,8 @@ type Message = {
   text: string;
   interrupted?: boolean;
   personaName?: string;
+  pending?: boolean;
+  notSent?: boolean;
 };
 
 type Speech = Extract<ServerEvent, { type: 'speech.ready' }>;
@@ -64,6 +69,8 @@ export function App() {
     proactiveEnabled,
     idleSeconds,
     autoReplyEnabled,
+    autoReplyMode,
+    manualMessageMode,
     autoReplyDelaySeconds,
     autoReplyMaxTurns,
     displayMode,
@@ -118,6 +125,9 @@ export function App() {
   const session = useRef('');
   const currentTurn = useRef<string | null>(null);
   const acceptTurn = useRef(false);
+  const pendingSpokenSubmission = useRef<
+    { group: string; original: string; text: string } | undefined
+  >(undefined);
   const seq = useRef(0);
 
   const recorder = useRef<MediaRecorder | undefined>(undefined);
@@ -150,6 +160,44 @@ export function App() {
       setDiagnostic(details);
     },
   });
+  const userSpeech = useUserMessageSpeech({
+    context: { sessionId: session.current, revision, language },
+    draft,
+    personaId,
+    connected,
+    muted,
+    onPhrase: (group, index, text) => {
+      renderer.current?.setSpeaking(false);
+      setCaption('');
+      setMessages((items) =>
+        items.some((item) => item.id === `${group}:${index}`)
+          ? items
+          : [
+              ...items,
+              { id: `${group}:${index}`, turnId: group, role: 'user', text, pending: true },
+            ],
+      );
+    },
+    onInterrupted: (group) =>
+      setMessages((items) =>
+        items.map((item) =>
+          item.turnId === group && item.pending ? { ...item, pending: false, notSent: true } : item,
+        ),
+      ),
+    onCommit: (text, context, group, automatic) => {
+      if (context.sessionId !== session.current || context.revision !== revision) return false;
+      return send(text, automatic, {
+        group,
+        revision: context.revision,
+        language: context.language,
+      });
+    },
+    onError: (message, details) => {
+      setError(message);
+      setDiagnostic(details);
+    },
+  });
+  const maleVoiceConfigured = health?.tts.voiceProfiles?.user_male?.configured === true;
   const phraseDisplay = usePhraseDisplay((phrase) => {
     const id = `${phrase.turnId}:phrase:${phrase.phraseIndex}`;
     setMessages((items) => {
@@ -178,8 +226,21 @@ export function App() {
       (suggestion.loading && !suggestion.autoLoading) ||
       !!suggestion.preview ||
       !!draft.trim() ||
+      (userSpeech.active && !userSpeech.automatic) ||
+      (!!userSpeech.plan && !userSpeech.automatic) ||
       !!error,
     generateAndSend: async (signal) => {
+      if (autoReplyMode === 'spoken') {
+        if (!maleVoiceConfigured) {
+          setError(
+            'Configure the male reference voice in the TTS service, then refresh service readiness.',
+          );
+          return false;
+        }
+        const plan = await userSpeech.prepare('automatic', '', signal);
+        if (signal.aborted || !plan) return false;
+        return userSpeech.speak(true, signal);
+      }
       const text = await suggestion.generate(session.current, { signal, automatic: true });
       if (signal.aborted || !text) return false;
       return send(text, true);
@@ -189,6 +250,8 @@ export function App() {
     enabled: proactiveEnabled && !autoReplyEnabled,
     delaySeconds: idleSeconds,
     blocked:
+      userSpeech.active ||
+      (!!userSpeech.plan && !userSpeech.automatic) ||
       !connected ||
       busy ||
       phraseDisplay.revealing ||
@@ -205,6 +268,12 @@ export function App() {
       if (proactiveTurn.current && (state !== 'Speaking' || document.hidden)) stop();
     },
   });
+
+  const autoReplyTyping =
+    suggestion.autoLoading ||
+    (autoReply.pending &&
+      userSpeech.automatic &&
+      ['preparing', 'synthesizing'].includes(userSpeech.phase));
 
   useEffect(() => {
     if (health?.proactiveIdleSeconds && !defaultDelayApplied.current) {
@@ -284,7 +353,7 @@ export function App() {
 
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, state]);
+  }, [messages, state, autoReplyTyping]);
 
   useEffect(
     () => () => {
@@ -355,6 +424,8 @@ export function App() {
       return;
     }
     if (event.type === 'session.reset') {
+      pendingSpokenSubmission.current = undefined;
+      userSpeech.cancel(true);
       currentTurn.current = null;
       setBusy(false);
       setMessages([]);
@@ -371,6 +442,8 @@ export function App() {
     }
     if (event.type === 'turn.started') {
       if (!acceptTurn.current) return;
+      if (event.origin === 'user' && pendingSpokenSubmission.current?.text === event.text)
+        pendingSpokenSubmission.current = undefined;
       currentTurn.current = event.turnId;
       turnSucceeded.current = false;
       turnDisplay.current = { id: event.turnId!, mode: event.displayMode, speech: event.speech };
@@ -401,6 +474,7 @@ export function App() {
       return;
     }
     if (event.type === 'error' && !event.turnId) {
+      recoverSpokenSubmission();
       setError(event.message);
       autoReply.pause();
       setDiagnostic(event.diagnostic);
@@ -503,7 +577,7 @@ export function App() {
     setDiagnostic(undefined);
     setState('Connecting');
     try {
-      await player.current!.unlock();
+      await Promise.all([player.current!.unlock(), userSpeech.unlock()]);
       const response = await fetch('/api/sessions', { method: 'POST' });
       if (!response.ok) throw new Error('Unable to create a session.');
       const data = await response.json();
@@ -523,6 +597,8 @@ export function App() {
         player.current!.stop();
         phraseDisplay.stop();
         autoReply.pause();
+        userSpeech.cancel(true);
+        recoverSpokenSubmission();
         setCompletedRevision(null);
         currentTurn.current = null;
         setConnected(false);
@@ -536,9 +612,17 @@ export function App() {
     }
   }
 
-  function send(text = draft, automated = false) {
+  function send(
+    text = draft,
+    automated = false,
+    spoken?: { group: string; revision: number; language: ReplyLanguage },
+  ) {
     if (!connected || busy || phraseDisplay.revealing || recording || transcribing || !text.trim())
       return false;
+    if (!spoken && userSpeech.active) return false;
+    pendingSpokenSubmission.current = spoken
+      ? { group: spoken.group, original: draft || text, text: text.trim() }
+      : undefined;
     if (!automated) autoReply.restart();
     phraseDisplay.stop();
     setError('');
@@ -553,7 +637,13 @@ export function App() {
     setState('Thinking');
     setCaption('');
     setLastSpeech(undefined);
-    setMessages((m) => [...m, { id: crypto.randomUUID(), role: 'user', text: text.trim() }]);
+    if (spoken)
+      setMessages((items) =>
+        items.map((item) =>
+          item.turnId === spoken.group ? { ...item, pending: false, notSent: false } : item,
+        ),
+      );
+    else setMessages((m) => [...m, { id: crypto.randomUUID(), role: 'user', text: text.trim() }]);
     acceptTurn.current = true;
     void player.current!.unlock();
     command({
@@ -561,8 +651,9 @@ export function App() {
       displayMode,
       text: text.trim(),
       personaId,
-      language,
+      language: spoken?.language ?? language,
       speech: speech && avatarReady,
+      ...(spoken ? { expectedRevision: spoken.revision } : {}),
     });
     return true;
   }
@@ -585,8 +676,21 @@ export function App() {
     });
   }
 
+  function recoverSpokenSubmission() {
+    const pending = pendingSpokenSubmission.current;
+    pendingSpokenSubmission.current = undefined;
+    if (!pending) return;
+    setMessages((items) =>
+      items.map((item) =>
+        item.turnId === pending.group ? { ...item, pending: false, notSent: true } : item,
+      ),
+    );
+    setDraft((current) => current || pending.original);
+  }
+
   function stop() {
     autoReply.pause();
+    userSpeech.cancel();
     phraseDisplay.stop();
     proactive.suppress();
     suggestion.cancel();
@@ -611,6 +715,7 @@ export function App() {
 
   function reset() {
     stop();
+    userSpeech.cancel(true);
     command({ type: 'session.reset' });
     setMessages([]);
     setCaption('');
@@ -624,6 +729,7 @@ export function App() {
 
   async function record() {
     autoReply.pause();
+    userSpeech.cancel(true);
     if (proactiveTurn.current) stop();
     suggestion.cancel();
     proactive.touch();
@@ -704,7 +810,33 @@ export function App() {
     } else setError('');
   }
 
-  const disabled = busy || phraseDisplay.revealing || recording || transcribing;
+  async function prepareManualSpeech() {
+    if (
+      !connected ||
+      busy ||
+      phraseDisplay.revealing ||
+      recording ||
+      transcribing ||
+      userSpeech.active ||
+      !draft.trim()
+    )
+      return;
+    autoReply.pause();
+    suggestion.cancel();
+    proactive.touch();
+    setError('');
+    setDiagnostic(undefined);
+    await userSpeech.unlock();
+    await userSpeech.prepare('rewrite', draft);
+  }
+
+  function submitManual() {
+    if (manualMessageMode === 'spoken') void prepareManualSpeech();
+    else send();
+  }
+
+  const disabled =
+    busy || phraseDisplay.revealing || recording || transcribing || userSpeech.active;
   return (
     <div className="studio">
       <header className="topbar">
@@ -770,6 +902,7 @@ export function App() {
             <div className="control-pill">
               <button
                 aria-label={muted ? 'Unmute voice' : 'Mute voice'}
+                data-auto-reply-control
                 onClick={() => {
                   player.current!.setMuted(!muted);
                   setMuted(!muted);
@@ -779,18 +912,38 @@ export function App() {
               </button>
               <span />
               <button
-                aria-label={paused ? 'Resume speech' : 'Pause speech'}
-                disabled={state !== 'Speaking'}
+                aria-label={
+                  (userSpeech.active ? userSpeech.phase === 'paused' : paused)
+                    ? 'Resume speech'
+                    : 'Pause speech'
+                }
+                data-auto-reply-control
+                disabled={
+                  state !== 'Speaking' &&
+                  !['speaking', 'paused', 'synthesizing'].includes(userSpeech.phase)
+                }
                 onClick={() =>
-                  void player.current!.togglePause().then(() => setPaused(player.current!.paused))
+                  userSpeech.active
+                    ? void userSpeech.togglePause()
+                    : void player
+                        .current!.togglePause()
+                        .then(() => setPaused(player.current!.paused))
                 }
               >
-                {paused ? <Play size={18} /> : <Pause size={18} />}
+                {(userSpeech.active ? userSpeech.phase === 'paused' : paused) ? (
+                  <Play size={18} />
+                ) : (
+                  <Pause size={18} />
+                )}
               </button>
               <button
                 aria-label="Stop response"
                 disabled={
-                  !busy && !phraseDisplay.revealing && !suggestion.loading && !autoReplyEnabled
+                  !busy &&
+                  !phraseDisplay.revealing &&
+                  !suggestion.loading &&
+                  !autoReplyEnabled &&
+                  !userSpeech.active
                 }
                 onClick={stop}
               >
@@ -835,7 +988,15 @@ export function App() {
               <h2>Let’s talk</h2>
               <p>
                 <span className={connected ? 'online' : ''} />
-                {connected ? state : 'Your personal AI companion'}
+                {connected
+                  ? userSpeech.active
+                    ? userSpeech.phase === 'preparing'
+                      ? 'Preparing your spoken message'
+                      : userSpeech.phase === 'paused'
+                        ? 'Your voice paused'
+                        : 'Speaking your reply'
+                    : state
+                  : 'Your personal AI companion'}
               </p>
             </div>
             <button
@@ -895,16 +1056,24 @@ export function App() {
                 </span>
                 <div className="bubble">
                   {message.text || (
-                    <span className="thinking">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
+                    <TypingIndicator
+                      label={`${message.personaName || persona?.name || 'Mira'} is typing`}
+                    />
                   )}
                   {message.interrupted && <span className="interrupted">Interrupted</span>}
+                  {message.pending && <span className="interrupted">Speaking · not sent yet</span>}
+                  {message.notSent && <span className="interrupted">Not sent</span>}
                 </div>
               </div>
             ))}
+            {autoReplyTyping && (
+              <div className="message user auto-reply-typing">
+                <span className="message-label">YOU</span>
+                <div className="bubble">
+                  <TypingIndicator label="Your automatic reply is typing" />
+                </div>
+              </div>
+            )}
             <div ref={end} />
           </div>
           {error && (
@@ -916,6 +1085,21 @@ export function App() {
             </div>
           )}
           {diagnostic && <ReplyDiagnostics diagnostic={diagnostic} />}
+          <UserMessageSpeechControls
+            plan={userSpeech.plan}
+            active={userSpeech.active}
+            automatic={userSpeech.automatic}
+            phase={userSpeech.phase}
+            configured={maleVoiceConfigured}
+            blocked={busy || phraseDisplay.revealing || recording || transcribing}
+            onEdit={userSpeech.edit}
+            onSpeak={() => {
+              autoReply.pause();
+              setError('');
+              void userSpeech.speak();
+            }}
+            onDismiss={() => userSpeech.cancel(true)}
+          />
           {suggestion.preview && (
             <div className="suggestion-preview">
               <p>{suggestion.preview}</p>
@@ -933,7 +1117,7 @@ export function App() {
               Transcript ready. Edit it below before sending.
             </div>
           )}
-          {(lastSpeech || retry) && !busy && (
+          {(lastSpeech || retry) && !busy && !userSpeech.active && (
             <div className="replay-row">
               {lastSpeech && (
                 <button onClick={() => void playReply(lastSpeech)}>
@@ -958,7 +1142,7 @@ export function App() {
             className="composer"
             onSubmit={(event) => {
               event.preventDefault();
-              send();
+              submitManual();
             }}
           >
             <textarea
@@ -979,11 +1163,17 @@ export function App() {
               }
               maxLength={4000}
               rows={1}
-              disabled={!connected || (busy && !proactiveTurn.current) || recording || transcribing}
+              disabled={
+                !connected ||
+                (busy && !proactiveTurn.current) ||
+                recording ||
+                transcribing ||
+                (userSpeech.active && userSpeech.phase !== 'preparing')
+              }
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  send();
+                  submitManual();
                 }
               }}
             />
@@ -1020,13 +1210,30 @@ export function App() {
             <button
               className="send-button"
               type="submit"
-              aria-label="Send message"
+              aria-label={
+                manualMessageMode === 'spoken' ? 'Prepare spoken message' : 'Send message'
+              }
               disabled={!connected || disabled || !draft.trim()}
             >
               <ArrowUp size={21} />
             </button>
           </form>
           <div className="chat-options">
+            <label className="language">
+              <select
+                aria-label="Manual message mode"
+                value={manualMessageMode}
+                disabled={disabled}
+                onChange={(event) => {
+                  userSpeech.cancel(true);
+                  preferences.update('manualMessageMode', event.target.value as 'text' | 'spoken');
+                }}
+              >
+                <option value="text">Send as typed</option>
+                <option value="spoken">Rewrite &amp; speak · male voice</option>
+              </select>
+              <ChevronDown size={13} />
+            </label>
             <label className="language">
               <span>◉</span>
               <select
@@ -1102,7 +1309,9 @@ export function App() {
                   : autoReply.sent >= autoReplyMaxTurns
                     ? 'limit reached'
                     : autoReply.pending
-                      ? 'drafting'
+                      ? userSpeech.active
+                        ? 'preparing or speaking your reply'
+                        : 'drafting'
                       : busy || phraseDisplay.revealing
                         ? 'waiting for Mira'
                         : 'waiting'}
@@ -1122,6 +1331,30 @@ export function App() {
             <details className="conversation-settings">
               <summary>Conversation settings</summary>
               <div className="settings-fields">
+                <label>
+                  Automatic reply mode
+                  <select
+                    aria-label="Auto reply mode"
+                    value={autoReplyMode}
+                    disabled={disabled}
+                    onChange={(event) => {
+                      autoReply.pause();
+                      userSpeech.cancel(true);
+                      preferences.update('autoReplyMode', event.target.value as 'text' | 'spoken');
+                      void userSpeech.unlock();
+                    }}
+                  >
+                    <option value="text">Text reply</option>
+                    <option value="spoken">Phrase bubbles &amp; male voice</option>
+                  </select>
+                </label>
+                {(autoReplyMode === 'spoken' || manualMessageMode === 'spoken') &&
+                  !maleVoiceConfigured && (
+                    <p>
+                      Male voice needs setup in the TTS service. Refresh service readiness after
+                      configuring its reference audio and transcript.
+                    </p>
+                  )}
                 <label>
                   Auto reply delay (seconds)
                   <input
