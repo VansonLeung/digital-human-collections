@@ -100,6 +100,12 @@ test('empty and malformed suggested replies retain raw output and completion det
           assert.equal(error.details.outputComplete, true);
           assert.equal(error.details.finishReason, 'stop');
           assert.deepEqual(error.details.requestBody, sentBody);
+          const inspected = error.details.requestBody?.messages.at(-1)?.content;
+          assert.match(inspected ?? '', /CURRENT TURN GUIDANCE/);
+          assert.match(
+            inspected ?? '',
+            /Optional style: (natural|warm|coy|playful|straightforward)/,
+          );
           assert.match(error.message, raw ? /valid draft/ : /empty reply/);
           return true;
         },

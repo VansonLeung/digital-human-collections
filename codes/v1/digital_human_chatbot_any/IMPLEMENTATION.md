@@ -275,6 +275,23 @@ Known local asset limitation: Ren uses MOC version 6 and offscreen rendering, wh
 
 ### Request prompt layout
 
+Each request includes **CURRENT TURN GUIDANCE** before the final language and
+JSON rules. `backend/src/llm/turnGuidance.ts` uses the same recent history sent
+to the model, the request kind (reply, user-side draft, or proactive), and
+conservative punctuation/exact-repeat cues. These cues are hints: the LLM still
+checks the dialogue for unanswered requests, paraphrased repeats, and natural
+topic closure. Turn counts never force a topic change.
+
+An optional style cue is selected once per request: natural (65%), warm (15%),
+coy (8%), playful (7%), or straightforward (5%). Style remains secondary to
+answering the current message and the conversation's tone; serious/factual
+contexts should stay direct or considerate. Selection does not randomize the
+topic, emotion, or whether to ask a question. The exact guidance is captured
+in the existing inspected LLM request body, and is never stored in chat history
+or added to speech text. No extra LLM call or persistent conversation state is
+required. The draft generator is shared by manual suggestions and automatic
+draft-and-send replies.
+
 `backend/src/llm/prompts.ts` separates Mira's persona and short system contract
 from detailed `replyInstructions()` and `draftInstructions()`.
 `backend/src/llm/requestMessages.ts` assembles role-tagged requests: a short

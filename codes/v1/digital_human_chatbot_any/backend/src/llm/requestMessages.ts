@@ -1,4 +1,5 @@
 import type { Language } from '@digital-human/shared';
+import { turnGuidance } from './turnGuidance.js';
 import {
   systemPrompt,
   replyInstructions,
@@ -24,13 +25,14 @@ function recentContext(history: ChatMessage[], limit: number): ChatMessage[] {
 export function buildReplyMessages(
   history: ChatMessage[],
   language: Language,
-  options: { proactive?: boolean; conversationalPhrases?: boolean } = {},
+  options: { proactive?: boolean; conversationalPhrases?: boolean; random?: () => number } = {},
 ): CompletionMessage[] {
-  const requirements = replyInstructions(language, options.conversationalPhrases);
+  const context = recentContext(history, recentMessageLimit);
+  const requirements = `${turnGuidance(context, options.proactive ? 'proactive' : 'reply', options.random)}\n\n${replyInstructions(language, options.conversationalPhrases)}`;
   if (options.proactive) {
     return [
       { role: 'system', content: systemPrompt() },
-      ...recentContext(history, recentMessageLimit),
+      ...context,
       {
         role: 'user',
         content: `TASK:\n${proactivePrompt()}\n\nRESPONSE REQUIREMENTS:\n${requirements}`,
@@ -53,13 +55,15 @@ export function buildReplyMessages(
 export function buildDraftMessages(
   history: ChatMessage[],
   language: Language,
+  options: { random?: () => number } = {},
 ): CompletionMessage[] {
+  const context = recentContext(history, recentMessageLimit);
   return [
     { role: 'system', content: draftSystemPrompt() },
-    ...recentContext(history, recentMessageLimit),
+    ...context,
     {
       role: 'user',
-      content: `TASK:\nGenerate one suggested next message from my perspective as the user.\n\nRESPONSE REQUIREMENTS:\n${draftInstructions(language)}`,
+      content: `TASK:\nGenerate one suggested next message from my perspective as the user.\n\nRESPONSE REQUIREMENTS:\n${turnGuidance(context, 'draft', options.random)}\n\n${draftInstructions(language)}`,
     },
   ];
 }
