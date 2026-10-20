@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { jsonrepair } from 'jsonrepair';
-import { userPhraseListSchema, type Language, type LlmRequestBody } from '@digital-human/shared';
+import {
+  userPhraseListSchema,
+  type Language,
+  type LlmRequestBody,
+  type ConversationPreferences,
+} from '@digital-human/shared';
 import type { Config } from '../config.js';
 import { complete, type ChatMessage } from '../services/llm.js';
 import { buildDraftMessages } from './requestMessages.js';
@@ -16,11 +21,17 @@ export async function generateUserPhrases(
   kind: 'automatic' | 'rewrite',
   text: string,
   signal: AbortSignal,
+  localizedProfanity = false,
+  preferences: Partial<ConversationPreferences> = {},
 ) {
   const contract = userPhraseInstructions(language);
   const messages =
     kind === 'automatic'
-      ? buildDraftMessages(history, language, { format: 'phrases' })
+      ? buildDraftMessages(history, language, {
+          ...preferences,
+          format: 'phrases',
+          localizedProfanity,
+        })
       : [
           {
             role: 'system' as const,

@@ -4,7 +4,11 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import type { ComponentHealth, Health, Persona } from '@digital-human/shared';
-import { replyLanguageSchema, llmRequestBodySchema } from '@digital-human/shared';
+import {
+  replyLanguageSchema,
+  llmRequestBodySchema,
+  conversationPreferencesSchema,
+} from '@digital-human/shared';
 import { appRoot, type Config } from './config.js';
 import { Session } from './sessions.js';
 import { MediaStore } from './media.js';
@@ -124,7 +128,12 @@ export async function createApplication(config: Config) {
     const session = sessions.get(String(req.params.id));
     if (!session) return res.status(404).json({ error: 'Session expired.' });
     const parsed = z
-      .object({ language: replyLanguageSchema, revision: z.number().int().nonnegative() })
+      .object({
+        language: replyLanguageSchema,
+        revision: z.number().int().nonnegative(),
+        localizedProfanity: z.boolean().default(false),
+        ...conversationPreferencesSchema.shape,
+      })
       .safeParse(req.body);
     if (!parsed.success) return res.status(422).json({ error: 'Invalid suggestion request.' });
     if (
@@ -149,7 +158,14 @@ export async function createApplication(config: Config) {
     };
     res.on('close', close);
     try {
-      const draft = await suggestReply(config, history, language, controller.signal);
+      const draft = await suggestReply(
+        config,
+        history,
+        language,
+        controller.signal,
+        parsed.data.localizedProfanity,
+        parsed.data,
+      );
       if (controller.signal.aborted || session.revision !== revision || session.active)
         return res
           .status(409)

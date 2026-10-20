@@ -43,6 +43,7 @@ export function turnGuidance(
   history: readonly ContextMessage[],
   kind: TurnKind,
   random: () => number = Math.random,
+  getToKnowEachOther = false,
 ) {
   const counterpart = kind === 'draft' ? 'assistant' : 'user';
   const latest = history.at(-1);
@@ -57,7 +58,12 @@ export function turnGuidance(
   const repeatedQuestion = latestQuestions.some((question) => priorQuestions.has(question));
   const sample = random();
   const roll = Number.isFinite(sample) ? Math.max(0, Math.min(1, sample)) : 0;
-  const style = styles.find((style) => roll < style.until) ?? styles.at(-1)!;
+  const style = getToKnowEachOther
+    ? {
+        name: 'attentive',
+        cue: 'Notice what was actually shared and respond with understanding. No flourish, teasing or question is required.',
+      }
+    : (styles.find((style) => roll < style.until) ?? styles.at(-1)!);
   const focus =
     kind === 'proactive'
       ? 'check_pending_questions'
@@ -67,6 +73,13 @@ export function turnGuidance(
 
   return `CURRENT TURN GUIDANCE (request-only; do not include these labels in the output):
 Turn kind: ${kind}.
+${
+  kind === 'draft'
+    ? 'Current speaker: the user talking to Mira. Mira is the counterpart. Earlier user lines are yours; earlier Mira lines belong to her.'
+    : 'Current speaker: Mira talking to the user. Earlier assistant lines are yours; earlier user lines belong to the counterpart.'
+}
+Keep ownership of experiences, feelings, actions, promises, and outcomes with the original speaker. Do not adopt the counterpart's statements as your own or reverse who did what when teasing.
+Before returning, check the recent lines from both speakers: replace any unnecessary echo or recycled punchline with your own relevant contribution. Do not just exchange I/you (我/你), reverse a challenge, or add a curse to disguise repetition. Preserve an exact quote only when the request calls for it.
 Conversation focus: ${focus}.
 ${
   kind === 'proactive'

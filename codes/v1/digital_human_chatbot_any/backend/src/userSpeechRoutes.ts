@@ -1,6 +1,11 @@
 import type { Express, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { replyLanguageSchema, languageSchema, llmRequestBodySchema } from '@digital-human/shared';
+import {
+  replyLanguageSchema,
+  languageSchema,
+  llmRequestBodySchema,
+  conversationPreferencesSchema,
+} from '@digital-human/shared';
 import type { Config } from './config.js';
 import type { Session } from './sessions.js';
 import type { MediaStore } from './media.js';
@@ -13,6 +18,8 @@ import { saveReplyDiagnostic } from './llm/diagnostics.js';
 const preparationSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('automatic'),
+    localizedProfanity: z.boolean().default(false),
+    ...conversationPreferencesSchema.shape,
     language: replyLanguageSchema,
     revision: z.number().int().nonnegative(),
   }),
@@ -86,6 +93,8 @@ export function registerUserSpeechRoutes(
           input.kind,
           text,
           controller.signal,
+          input.kind === 'automatic' && input.localizedProfanity,
+          input.kind === 'automatic' ? input : {},
         );
         if (!current())
           return res.status(409).json({ error: 'Spoken-message preparation was cancelled.' });

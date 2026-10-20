@@ -4,10 +4,16 @@ import {
   type UserSpeechPlan,
   type ReplyLanguage,
   type ReplyDiagnostic,
+  type ConversationPreferences,
 } from '@digital-human/shared';
 import { SpeechQueuePlayer } from './SpeechQueuePlayer';
 
-export type UserSpeechContext = { sessionId: string; revision: number; language: ReplyLanguage };
+export type UserSpeechContext = Partial<ConversationPreferences> & {
+  sessionId: string;
+  revision: number;
+  language: ReplyLanguage;
+  localizedProfanity?: boolean;
+};
 export type UserSpeechState = {
   phase: 'idle' | 'preparing' | 'preview' | 'synthesizing' | 'speaking' | 'paused';
   plan?: UserSpeechPlan;
@@ -98,7 +104,17 @@ export class UserMessageSpeechController {
       const result = await this.post(
         context,
         'prepare',
-        { kind, ...(kind === 'rewrite' ? { text } : {}), language: context.language },
+        {
+          kind,
+          ...(kind === 'rewrite'
+            ? { text }
+            : {
+                localizedProfanity: context.localizedProfanity ?? false,
+                getToKnowEachOther: context.getToKnowEachOther ?? false,
+                aboutMe: context.aboutMe ?? '',
+              }),
+          language: context.language,
+        },
         operation.controller.signal,
       );
       if (this.operation !== operation || operation.controller.signal.aborted) return;

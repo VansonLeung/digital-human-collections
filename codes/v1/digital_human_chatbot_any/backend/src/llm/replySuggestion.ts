@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { jsonrepair } from 'jsonrepair';
-import type { Language, LlmRequestBody } from '@digital-human/shared';
+import type { Language, LlmRequestBody, ConversationPreferences } from '@digital-human/shared';
 import type { Config } from '../config.js';
 import { complete, EmptyCompletionError, type ChatMessage } from '../services/llm.js';
 import { buildDraftMessages } from './requestMessages.js';
@@ -13,6 +13,8 @@ export async function suggestReply(
   history: ChatMessage[],
   language: Language,
   signal: AbortSignal,
+  localizedProfanity = false,
+  preferences: Partial<ConversationPreferences> = {},
 ) {
   let raw = '';
   let requestBody: LlmRequestBody | null = null;
@@ -21,7 +23,7 @@ export async function suggestReply(
   try {
     await complete(
       config,
-      buildDraftMessages(history, language),
+      buildDraftMessages(history, language, { ...preferences, localizedProfanity }),
       (delta) => {
         raw = (raw + delta).slice(0, 16000);
       },

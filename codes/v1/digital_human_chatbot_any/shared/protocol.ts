@@ -1,9 +1,11 @@
 import { z } from 'zod';
+import { conversationPreferencesSchema } from './conversation.js';
 import { phrasePerformanceSchema } from './performance.js';
 
 export * from './performance.js';
 export * from './llmReply.js';
 export * from './clientSettings.js';
+export * from './conversation.js';
 export * from './userSpeech.js';
 
 export const languageSchema = z.enum(['en', 'zh', 'yue']);
@@ -44,11 +46,14 @@ export type DisplayMode = z.infer<typeof displayModeSchema>;
 export const commandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('turn.send'),
+    automatic: z.boolean().optional(),
     displayMode: displayModeSchema.default('full'),
     text: z.string().trim().min(1).max(4000),
     personaId: z.string().min(1).max(80),
     language: replyLanguageSchema,
     speech: z.boolean().default(true),
+    localizedProfanity: z.boolean().optional(),
+    ...conversationPreferencesSchema.partial().shape,
     expectedRevision: z.number().int().nonnegative().optional(),
   }),
   z.object({ type: z.literal('turn.stop'), turnId: z.string().optional() }),
@@ -66,6 +71,8 @@ export const commandSchema = z.discriminatedUnion('type', [
     personaId: z.string().min(1).max(80),
     language: replyLanguageSchema,
     speech: z.boolean().default(true),
+    localizedProfanity: z.boolean().optional(),
+    ...conversationPreferencesSchema.partial().shape,
   }),
   z.object({
     type: z.enum(['playback.started', 'playback.ended', 'playback.failed']),

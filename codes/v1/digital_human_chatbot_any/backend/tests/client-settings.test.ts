@@ -26,6 +26,9 @@ test('client preferences retain toggles and parameters without conversation or c
   const values = {
     ...defaultClientSettings,
     autoReplyEnabled: true,
+    localizedProfanity: true,
+    getToKnowEachOther: true,
+    aboutMe: 'I like quiet walks.\nI prefer tea.',
     autoReplyMode: 'spoken' as const,
     manualMessageMode: 'spoken' as const,
     autoReplyDelaySeconds: 2,
@@ -56,6 +59,9 @@ test('malformed preferences fall back per field and unsupported versions reset t
         autoReplyMaxTurns: 999,
         displayMode: 'unknown',
         language: 'yue',
+        localizedProfanity: 'true',
+        getToKnowEachOther: 'true',
+        aboutMe: 'x'.repeat(2001),
       },
     }),
   );
@@ -64,6 +70,9 @@ test('malformed preferences fall back per field and unsupported versions reset t
   assert.equal(restored.values.autoReplyMaxTurns, 5);
   assert.equal(restored.values.displayMode, 'full');
   assert.equal(restored.values.speech, false);
+  assert.equal(restored.values.localizedProfanity, false);
+  assert.equal(restored.values.getToKnowEachOther, false);
+  assert.equal(restored.values.aboutMe, '');
   assert.equal(restored.values.language, 'yue');
   store.setItem(settingsStorageKey, '{broken');
   assert.deepEqual(loadSettings(store).values, defaultClientSettings);

@@ -35,20 +35,36 @@ test('phrase display streams validated phrases and keeps assistant history plain
   const f = await fixture();
   const phrases = ['Well,', 'let me think.', 'Here is an idea.'];
   try {
-    await runTurn(f.config, f.session, { ...command, displayMode: 'phrases' }, [persona], f.media, {
-      answer: async (_c, _h, _l, delta, _s, options) => {
-        assert.equal(options?.conversationalPhrases, true);
-        const raw = JSON.stringify(
-          phrases.map((phrase) => ({ phrase, emotion: 'neutral', gestures: [] })),
-        );
-        for (let i = 0; i < raw.length; i += 7) delta(raw.slice(i, i + 7));
-        return raw;
+    await runTurn(
+      f.config,
+      f.session,
+      {
+        ...command,
+        displayMode: 'phrases',
+        localizedProfanity: true,
+        getToKnowEachOther: true,
+        aboutMe: 'I like walks.',
       },
-      synthesize: async () => {
-        throw new Error('Text-only turn must not synthesize');
+      [persona],
+      f.media,
+      {
+        answer: async (_c, _h, _l, delta, _s, options) => {
+          assert.equal(options?.conversationalPhrases, true);
+          assert.equal(options?.localizedProfanity, true);
+          assert.equal(options?.getToKnowEachOther, true);
+          assert.equal(options?.aboutMe, 'I like walks.');
+          const raw = JSON.stringify(
+            phrases.map((phrase) => ({ phrase, emotion: 'neutral', gestures: [] })),
+          );
+          for (let i = 0; i < raw.length; i += 7) delta(raw.slice(i, i + 7));
+          return raw;
+        },
+        synthesize: async () => {
+          throw new Error('Text-only turn must not synthesize');
+        },
+        mouthCues: async () => [],
       },
-      mouthCues: async () => [],
-    });
+    );
     assert.deepEqual(
       f.events
         .filter((event) => event.type === 'answer.phrase')
@@ -304,6 +320,9 @@ test('proactive replies require opt-in, idle time and current history; only one 
   f.session.proactive.delaySeconds = 1;
   const proactive = {
     type: 'turn.proactive' as const,
+    localizedProfanity: true,
+    getToKnowEachOther: true,
+    aboutMe: 'I like tea.',
     revision: 0,
     personaId: 'sample',
     language: 'auto' as const,
@@ -314,6 +333,9 @@ test('proactive replies require opt-in, idle time and current history; only one 
     answer: async (_c, history, _l, delta, _s, options) => {
       calls++;
       assert.equal(options?.proactive, true);
+      assert.equal(options?.getToKnowEachOther, true);
+      assert.equal(options?.aboutMe, 'I like tea.');
+      assert.equal(options?.localizedProfanity, true);
       assert.deepEqual(history, [
         { role: 'user', content: 'Hello' },
         { role: 'assistant', content: 'Hi!' },
@@ -563,7 +585,7 @@ test('suggested replies stay outside history and diagnostic downloads are scoped
   let calls = 0;
   let slow = false;
   let invalid = false;
-  let sentBody: unknown;
+  let sentBody: any;
   let release!: () => void;
   const upstream = createServer(async (req, res) => {
     let body = '';
@@ -572,9 +594,10 @@ test('suggested replies stay outside history and diagnostic downloads are scoped
     sentBody = input;
     calls++;
     assert.match(input.messages[0].content, /FROM THE USER/);
-    assert.deepEqual(input.messages.slice(1, -1), [
-      { role: 'user', content: 'Hi' },
-      { role: 'assistant', content: 'Hello!' },
+    assert.equal(input.messages.length, 2);
+    assert.deepEqual(JSON.parse(input.messages[1].content.split('\n')[1]), [
+      { speaker: 'user', text: 'Hi' },
+      { speaker: 'Mira', text: 'Hello!' },
     ]);
     assert.equal(input.messages.at(-1).role, 'user');
     assert.match(input.messages.at(-1).content, /suggested next message/);
@@ -612,20 +635,32 @@ test('suggested replies stay outside history and diagnostic downloads are scoped
     { role: 'assistant', content: 'Hello!' },
   ];
   context.sessions.set(session.id, session);
-  const request = () =>
+  const request = (localizedProfanity?: boolean, preferences: Record<string, unknown> = {}) =>
     fetch(`${url}/api/sessions/${session.id}/suggest-reply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ language: 'en', revision: 0 }),
+      body: JSON.stringify({ language: 'en', revision: 0, localizedProfanity, ...preferences }),
     });
   try {
-    const response = await request();
+    const response = await request(true, {
+      getToKnowEachOther: true,
+      aboutMe: 'I like quiet walks.',
+    });
     assert.equal(response.status, 200);
+    assert.match(sentBody.messages.at(-1).content, /LOCALIZED PROFANITY MODE: ON/);
+    assert.match(sentBody.messages.at(-1).content, /CONVERSATION FOCUS: GET TO KNOW EACH OTHER/);
+    assert.match(sentBody.messages.at(-1).content, /I like quiet walks/);
+    assert.equal((await request(false, { aboutMe: 'x'.repeat(2001) })).status, 422);
     assert.deepEqual(await response.json(), { draft: 'Tell me more about that.', revision: 0 });
     assert.equal(session.history.length, 2);
     invalid = true;
     const failed = await request();
     assert.equal(failed.status, 502);
+    assert.match(sentBody.messages.at(-1).content, /LOCALIZED PROFANITY MODE: OFF/);
+    assert.ok(
+      !sentBody.messages.at(-1).content.includes('CONVERSATION FOCUS: GET TO KNOW EACH OTHER'),
+    );
+    assert.ok(!sentBody.messages.at(-1).content.includes('I like quiet walks'));
     const failedDraft = await failed.json();
     assert.deepEqual(failedDraft.diagnostic.requestBody, sentBody);
     assert.equal(session.history.length, 2);
@@ -673,6 +708,31 @@ test('suggested replies stay outside history and diagnostic downloads are scoped
       new Promise<void>((resolve) => server.close(() => resolve())),
       new Promise<void>((resolve) => upstream.close(() => resolve())),
     ]);
+    await f.close();
+  }
+});
+
+test('only unreviewed automatic submissions mark user history as generated', async () => {
+  const f = await fixture();
+  try {
+    for (const automatic of [true, false]) {
+      await runTurn(f.config, f.session, { ...command, automatic }, [persona], f.media, {
+        answer: async (_c, history, _l, delta) => {
+          assert.equal(history.at(-1)?.generated, automatic ? true : undefined);
+          const raw = '[{"phrase":"A reply.","emotion":"neutral","gestures":[]}]';
+          delta(raw);
+          return raw;
+        },
+        synthesize: async () => {
+          throw new Error('No speech');
+        },
+        mouthCues: async () => [],
+      });
+      assert.equal(f.session.history.at(-2)?.generated, automatic ? true : undefined);
+      assert.equal(f.session.history.at(-2)?.content, 'Hello');
+      assert.equal(f.session.history.at(-1)?.content, 'A reply.');
+    }
+  } finally {
     await f.close();
   }
 });

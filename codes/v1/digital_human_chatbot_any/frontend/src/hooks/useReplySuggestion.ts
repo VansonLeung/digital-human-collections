@@ -1,14 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReplyLanguage, ReplyDiagnostic } from '@digital-human/shared';
+import type {
+  ReplyLanguage,
+  ReplyDiagnostic,
+  ConversationPreferences,
+} from '@digital-human/shared';
 
-export function useReplySuggestion(options: {
-  draft: string;
-  language: ReplyLanguage;
-  revision: number;
-  blocked: boolean;
-  onDraft: (text: string) => void;
-  onError: (message: string, diagnostic?: ReplyDiagnostic) => void;
-}) {
+export function useReplySuggestion(
+  options: ConversationPreferences & {
+    draft: string;
+    language: ReplyLanguage;
+    localizedProfanity: boolean;
+    revision: number;
+    blocked: boolean;
+    onDraft: (text: string) => void;
+    onError: (message: string, diagnostic?: ReplyDiagnostic) => void;
+  },
+) {
   const [loading, setLoading] = useState(false);
   const [autoLoading, setAutoLoading] = useState(false);
   const [preview, setPreview] = useState('');
@@ -24,7 +31,15 @@ export function useReplySuggestion(options: {
   }
   useEffect(() => {
     cancel();
-  }, [options.draft, options.language, options.revision, options.blocked]);
+  }, [
+    options.draft,
+    options.language,
+    options.localizedProfanity,
+    options.getToKnowEachOther,
+    options.aboutMe,
+    options.revision,
+    options.blocked,
+  ]);
   useEffect(() => () => request.current?.abort(), []);
 
   async function generate(sessionId: string, mode?: { signal: AbortSignal; automatic: true }) {
@@ -42,7 +57,13 @@ export function useReplySuggestion(options: {
       const response = await fetch(`/api/sessions/${sessionId}/suggest-reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language: snapshot.language, revision: snapshot.revision }),
+        body: JSON.stringify({
+          language: snapshot.language,
+          revision: snapshot.revision,
+          localizedProfanity: snapshot.localizedProfanity,
+          getToKnowEachOther: snapshot.getToKnowEachOther,
+          aboutMe: snapshot.aboutMe,
+        }),
         signal: controller.signal,
       });
       const result = await response.json();

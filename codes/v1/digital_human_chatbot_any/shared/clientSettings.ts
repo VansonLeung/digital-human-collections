@@ -1,9 +1,12 @@
 import { z } from 'zod';
+import { conversationPreferencesSchema } from './conversation.js';
 
 export const clientSettingsSchema = z.object({
+  ...conversationPreferencesSchema.shape,
   personaId: z.string().min(1).max(80).default('constraint-twist'),
   language: z.enum(['auto', 'en', 'zh', 'yue']).default('auto'),
   speech: z.boolean().default(true),
+  localizedProfanity: z.boolean().default(false),
   muted: z.boolean().default(false),
   proactiveEnabled: z.boolean().default(false),
   idleSeconds: z.number().int().min(1).max(3600).default(60),

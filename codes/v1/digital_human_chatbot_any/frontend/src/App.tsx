@@ -35,6 +35,7 @@ import { useSettings } from './hooks/useSettings';
 import { useAutoReply } from './hooks/useAutoReply';
 import { usePhraseDisplay } from './hooks/usePhraseDisplay';
 import { useUserMessageSpeech } from './hooks/useUserMessageSpeech';
+import { ConversationFocusControls } from './components/ConversationFocusControls';
 import { UserMessageSpeechControls } from './components/UserMessageSpeechControls';
 import { TypingIndicator } from './components/TypingIndicator';
 
@@ -64,6 +65,9 @@ export function App() {
   const {
     personaId,
     language,
+    localizedProfanity,
+    getToKnowEachOther,
+    aboutMe,
     speech,
     muted,
     proactiveEnabled,
@@ -152,6 +156,9 @@ export function App() {
   const suggestion = useReplySuggestion({
     draft,
     language,
+    localizedProfanity,
+    getToKnowEachOther,
+    aboutMe,
     revision,
     blocked: !connected || busy || recording || transcribing,
     onDraft: setDraft,
@@ -161,7 +168,14 @@ export function App() {
     },
   });
   const userSpeech = useUserMessageSpeech({
-    context: { sessionId: session.current, revision, language },
+    context: {
+      sessionId: session.current,
+      revision,
+      language,
+      localizedProfanity,
+      getToKnowEachOther,
+      aboutMe,
+    },
     draft,
     personaId,
     connected,
@@ -648,11 +662,15 @@ export function App() {
     void player.current!.unlock();
     command({
       type: 'turn.send',
+      automatic: automated,
       displayMode,
       text: text.trim(),
       personaId,
       language: spoken?.language ?? language,
       speech: speech && avatarReady,
+      localizedProfanity,
+      getToKnowEachOther,
+      aboutMe,
       ...(spoken ? { expectedRevision: spoken.revision } : {}),
     });
     return true;
@@ -673,6 +691,9 @@ export function App() {
       personaId,
       language,
       speech: speech && avatarReady,
+      localizedProfanity,
+      getToKnowEachOther,
+      aboutMe,
     });
   }
 
@@ -833,6 +854,19 @@ export function App() {
   function submitManual() {
     if (manualMessageMode === 'spoken') void prepareManualSpeech();
     else send();
+  }
+
+  function updateConversationPreference(key: 'getToKnowEachOther', value: boolean): void;
+  function updateConversationPreference(key: 'aboutMe', value: string): void;
+  function updateConversationPreference(
+    key: 'getToKnowEachOther' | 'aboutMe',
+    value: boolean | string,
+  ) {
+    autoReply.pause();
+    suggestion.cancel();
+    userSpeech.cancel(true);
+    if (key === 'getToKnowEachOther' && typeof value === 'boolean') preferences.update(key, value);
+    if (key === 'aboutMe' && typeof value === 'string') preferences.update(key, value);
   }
 
   const disabled =
@@ -1037,6 +1071,8 @@ export function App() {
                       'Tell me something surprising',
                       'Help me think through an idea',
                       'Introduce yourself',
+                      '你識唔識講廣東話呀？',
+                      '你會講國語嗎？',
                     ].map((text) => (
                       <button key={text} disabled={disabled} onClick={() => send(text)}>
                         {text}
@@ -1061,7 +1097,6 @@ export function App() {
                     />
                   )}
                   {message.interrupted && <span className="interrupted">Interrupted</span>}
-                  {message.pending && <span className="interrupted">Speaking · not sent yet</span>}
                   {message.notSent && <span className="interrupted">Not sent</span>}
                 </div>
               </div>
@@ -1331,6 +1366,35 @@ export function App() {
             <details className="conversation-settings">
               <summary>Conversation settings</summary>
               <div className="settings-fields">
+                <ConversationFocusControls
+                  getToKnowEachOther={getToKnowEachOther}
+                  aboutMe={aboutMe}
+                  disabled={disabled}
+                  onFocusChange={(value) =>
+                    updateConversationPreference('getToKnowEachOther', value)
+                  }
+                  onAboutMeChange={(value) => updateConversationPreference('aboutMe', value)}
+                />
+                <label className="conversation-toggle">
+                  Localized swearing · 地道粗口
+                  <input
+                    type="checkbox"
+                    aria-label="Localized swearing"
+                    checked={localizedProfanity}
+                    disabled={disabled}
+                    onChange={(event) => {
+                      autoReply.pause();
+                      suggestion.cancel();
+                      userSpeech.cancel(true);
+                      preferences.update('localizedProfanity', event.target.checked);
+                    }}
+                  />
+                </label>
+                <p className="settings-hint">
+                  Encourages Mira and suggested or automatic user replies to swear naturally in
+                  their reply language, including Hong Kong Cantonese slang. Manual rewrites
+                  preserve your original tone.
+                </p>
                 <label>
                   Automatic reply mode
                   <select

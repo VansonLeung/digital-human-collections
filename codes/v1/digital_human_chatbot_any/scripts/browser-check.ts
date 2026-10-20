@@ -98,6 +98,14 @@ const mock = createServer(async (req, res) => {
     const isDraft = input.messages[0].content.includes('FROM THE USER');
     const isSpoken = finalContent.includes('SPOKEN USER MESSAGE FORMAT');
     if (isDraft) {
+      assert.deepEqual(
+        input.messages.map((message: any) => message.role),
+        ['system', 'user'],
+      );
+      const transcript = JSON.parse(finalContent.split('\n')[1]);
+      assert.equal(transcript.at(-1)?.speaker, 'Mira');
+      assert.match(finalContent, /Current speaker: the user talking to Mira/);
+      assert.match(finalContent, /do not echo, closely paraphrase/);
       draftCalls++;
       assert.equal(input.messages.at(-1).role, 'user');
       assert.match(input.messages.at(-1).content, /suggested next message/);
@@ -522,6 +530,14 @@ try {
   assert.equal(await page.locator('.message').count(), 0);
 
   await page.getByText('Conversation settings', { exact: true }).click();
+  const swearing = page.getByRole('checkbox', { name: 'Localized swearing', exact: true });
+  assert.equal(await swearing.isChecked(), false);
+  const focus = page.getByRole('checkbox', { name: 'Get to know each other', exact: true });
+  const aboutMe = page.getByRole('textbox', { name: 'About me', exact: true });
+  const profile = 'I enjoy quiet walks.\nI prefer tea after work.';
+  const editedProfile = `${profile}\nI like rainy evenings.`;
+  assert.equal(await focus.isChecked(), false);
+  assert.equal(await aboutMe.inputValue(), '');
   const display = page.getByRole('combobox', { name: 'Mira message display' });
   const phraseDelay = page.getByRole('spinbutton', { name: 'Text-only phrase delay seconds' });
   await display.selectOption('phrases');
@@ -608,6 +624,10 @@ try {
   await page.getByRole('spinbutton', { name: 'Auto reply delay seconds' }).fill('1');
   await page.getByRole('spinbutton', { name: 'Auto reply turn limit' }).fill('2');
   const auto = page.getByRole('checkbox', { name: 'Auto-LLM-suggest-and-reply' });
+  await swearing.check();
+  await focus.check();
+  await aboutMe.fill(profile);
+  const beforeSwearingConversation = llmRequests.length;
   await page.getByRole('checkbox', { name: 'Proactive chat' }).check();
   await auto.check();
   const proactiveBeforeAuto = proactiveCalls;
@@ -622,6 +642,38 @@ try {
   );
   await page.getByText('2/2 sent · limit reached', { exact: true }).waitFor({ timeout: 12000 });
   assert.equal(draftCalls - draftsBeforeAuto, 2);
+  const swearingConversation = llmRequests.slice(beforeSwearingConversation);
+  assert.ok(
+    swearingConversation.some((request) => request.messages[0].content.includes('FROM THE USER')),
+  );
+  assert.ok(swearingConversation.some((request) => request.messages[0].content.includes('Mira')));
+  for (const request of swearingConversation) {
+    assert.match(request.messages.at(-1).content, /LOCALIZED PROFANITY MODE: ON/);
+    assert.match(request.messages.at(-1).content, /CONVERSATION FOCUS: GET TO KNOW EACH OTHER/);
+    assert.ok(request.messages.at(-1).content.includes(JSON.stringify(profile)));
+    assert.ok(!request.messages.at(-1).content.includes('a little seductive'));
+  }
+  assert.ok(
+    swearingConversation.some((request) =>
+      JSON.stringify(request.messages).includes('personal details are unconfirmed'),
+    ),
+  );
+  assert.equal(
+    sentCommands.filter((command) => command.type === 'turn.send').at(-1).automatic,
+    true,
+  );
+  assert.equal(
+    sentCommands.filter((command) => command.type === 'turn.send').at(-1).getToKnowEachOther,
+    true,
+  );
+  assert.equal(
+    sentCommands.filter((command) => command.type === 'turn.send').at(-1).aboutMe,
+    profile,
+  );
+  assert.equal(
+    sentCommands.filter((command) => command.type === 'turn.send').at(-1).localizedProfanity,
+    true,
+  );
   assert.equal(await page.locator('.message.user .bubble').count(), 3);
   assert.equal(
     (await page.locator('.message.user .bubble').allTextContents()).filter(
@@ -636,6 +688,18 @@ try {
     proactiveBeforeAuto,
     'Proactive follow-ups are suspended during auto reply mode',
   );
+  await page.getByRole('button', { name: 'Resume auto replies', exact: true }).click();
+  await page.waitForFunction(() =>
+    document.querySelector('.auto-reply-options')?.textContent?.includes('drafting'),
+  );
+  await aboutMe.fill(editedProfile);
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.equal(
+    await page.locator('.message.user .bubble').count(),
+    3,
+    'Profile editing cancels an in-flight automatic suggestion',
+  );
+  assert.match(await page.locator('.auto-reply-options').innerText(), /paused/);
   await page.getByRole('button', { name: 'Resume auto replies', exact: true }).click();
   await page.waitForFunction(() =>
     document.querySelector('.auto-reply-options')?.textContent?.includes('drafting'),
@@ -663,6 +727,9 @@ try {
     '4.5',
   );
   await page.getByText('Conversation settings', { exact: true }).click();
+  assert.equal(await swearing.isChecked(), true);
+  assert.equal(await focus.isChecked(), true);
+  assert.equal(await aboutMe.inputValue(), editedProfile);
   assert.equal(await auto.isChecked(), true);
   assert.equal(await page.getByRole('checkbox', { name: 'Proactive chat' }).isChecked(), true);
   assert.equal(await page.getByRole('checkbox', { name: 'Spoken replies' }).isChecked(), false);
@@ -688,6 +755,9 @@ try {
   assert.equal(await page.getByRole('spinbutton', { name: 'Pose hold seconds' }).inputValue(), '3');
   await page.getByText('VRM poses · 姿勢', { exact: true }).click();
   assert.equal(await auto.isChecked(), false);
+  assert.equal(await swearing.isChecked(), false);
+  assert.equal(await focus.isChecked(), false);
+  assert.equal(await aboutMe.inputValue(), '');
   assert.equal(await display.inputValue(), 'full');
   assert.equal(
     await page.getByRole('spinbutton', { name: 'Auto reply turn limit' }).inputValue(),
@@ -701,12 +771,20 @@ try {
   const manualMode = page.getByRole('combobox', { name: 'Manual message mode' });
   const autoMode = page.getByRole('combobox', { name: 'Auto reply mode' });
   await manualMode.selectOption('spoken');
+  await focus.check();
+  await aboutMe.fill(profile);
   const originalMessage = 'I am tired, but I would like to keep chatting.';
   await composer.fill(originalMessage);
   await page.getByRole('button', { name: 'Prepare spoken message', exact: true }).click();
   await page.getByRole('textbox', { name: 'Spoken phrase 1', exact: true }).waitFor();
   assert.equal(await composer.inputValue(), originalMessage);
   assert.equal(await page.locator('.message.user').count(), 0);
+  assert.ok(
+    !JSON.stringify(llmRequests.at(-1).messages).includes(
+      'CONVERSATION FOCUS: GET TO KNOW EACH OTHER',
+    ),
+  );
+  assert.ok(!JSON.stringify(llmRequests.at(-1).messages).includes('I enjoy quiet walks.'));
   await page
     .getByRole('textbox', { name: 'Spoken phrase 1', exact: true })
     .fill('Edited first phrase.');
@@ -787,6 +865,8 @@ try {
   await page.getByRole('button', { name: 'Clear conversation', exact: true }).click();
   await manualMode.selectOption('text');
   await autoMode.selectOption('spoken');
+  await swearing.check();
+  const beforeSpokenSwearing = llmRequests.length;
   await page.getByRole('spinbutton', { name: 'Auto reply delay seconds' }).fill('1');
   await page.getByRole('spinbutton', { name: 'Auto reply turn limit' }).fill('1');
   await auto.check();
@@ -825,6 +905,28 @@ try {
     sentCommands.filter((command) => command.type === 'turn.send').at(-1).text,
     'First spoken phrase. Second spoken phrase.',
   );
+  const spokenSwearing = llmRequests.slice(beforeSpokenSwearing);
+  assert.ok(
+    spokenSwearing.some(
+      (request) =>
+        request.messages[0].content.includes('FROM THE USER') &&
+        request.messages.at(-1).content.includes('SPOKEN USER MESSAGE FORMAT'),
+    ),
+  );
+  for (const request of spokenSwearing) {
+    assert.match(request.messages.at(-1).content, /LOCALIZED PROFANITY MODE: ON/);
+    assert.match(request.messages.at(-1).content, /CONVERSATION FOCUS: GET TO KNOW EACH OTHER/);
+    assert.ok(request.messages.at(-1).content.includes(JSON.stringify(profile)));
+  }
+  assert.equal(
+    sentCommands.filter((command) => command.type === 'turn.send').at(-1).automatic,
+    true,
+  );
+  assert.equal(
+    await aboutMe.inputValue(),
+    profile,
+    'Generated conversations never overwrite the profile',
+  );
   const beforeCancelledAutoSpeech = sentCommands.filter(
     (command) => command.type === 'turn.send',
   ).length;
@@ -857,6 +959,8 @@ try {
   assert.equal(await manualMode.inputValue(), 'spoken');
   await page.getByText('Conversation settings', { exact: true }).click();
   assert.equal(await autoMode.inputValue(), 'spoken');
+  assert.equal(await focus.isChecked(), true);
+  assert.equal(await aboutMe.inputValue(), profile);
   await page.getByRole('button', { name: 'Reset settings', exact: true }).click();
   assert.equal(await manualMode.inputValue(), 'text');
   assert.equal(await autoMode.inputValue(), 'text');
@@ -890,6 +994,8 @@ try {
       'Stop retains the draft and prevents submission; missing male voice disables playback',
       'automatic spoken replies share the queue and persist independent mode preferences',
       'automatic replies use animated typing dots without revealing the phrase editor, including after Stop',
+      'get-to-know focus and profile reach both speakers in text and spoken modes, persist across reloads and reset independently',
+      'editing the profile cancels pending automatic suggestions; generated claims do not update the profile',
       'browser settings persist across reloads and reset independently',
       'VRM pose previews work without a conversation, persist controls and accept LLM pose cues',
       'ordered phrases with gesture metadata',

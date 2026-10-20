@@ -216,7 +216,14 @@ export async function runTurn(
     session.send({ type: 'state.changed', state: 'Thinking' });
     const history = proactive
       ? [...session.history]
-      : [...session.history, { role: 'user' as const, content: command.text }];
+      : [
+          ...session.history,
+          {
+            role: 'user' as const,
+            content: command.text,
+            ...(command.automatic ? { generated: true } : {}),
+          },
+        ];
     let receivedDelta = false;
     const raw = await adapters.answer(
       config,
@@ -238,6 +245,9 @@ export async function runTurn(
       turn.controller.signal,
       {
         proactive,
+        localizedProfanity: command.localizedProfanity ?? false,
+        getToKnowEachOther: command.getToKnowEachOther ?? false,
+        aboutMe: command.aboutMe ?? '',
         conversationalPhrases: command.displayMode === 'phrases',
         onFinishReason: (reason) => {
           finishReason = reason;

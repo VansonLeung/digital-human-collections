@@ -354,9 +354,16 @@ input under **Given I say:** using JSON string encoding, then append language,
 phrase, emotion, gesture and JSON-array rules. The current message appears
 only once. Proactive replies use a follow-up task instead of invented user
 speech. Suggestions use their own user-side task and JSON draft-object rules.
+For both text and spoken user drafts, the bounded history is serialized once as
+quoted transcript data with explicit `user`/`Mira` speaker labels. Mira's lines
+are not supplied as the drafting model's own previous `assistant` outputs.
 
-History remains plain text with its original roles; request wrappers, examples
-and requirements are never committed to history. Context uses at most 12 recent
+History content remains plain text with its original roles; request wrappers,
+examples and requirements are never committed to history. Unreviewed automatic
+user submissions carry internal `generated: true` provenance. Draft transcripts
+include that marker; Mira's request context labels those lines as unconfirmed,
+without sending extra provider message properties. Manually sent/reviewed drafts
+and reviewed manual spoken rewrites are user-supplied turns. Context uses at most 12 recent
 conversation messages and drops any leading orphan assistant replies after
 trimming. Prompt-only formatting remains in use; this layout does not enable
 provider-enforced JSON schemas. Diagnostic request bodies show the assembled
@@ -371,11 +378,62 @@ is preserved with a preview/accept action. Typing, Stop, Reset, language changes
 or a changed conversation revision cancel stale suggestions. The route admits
 one suggestion at a time and rechecks history before returning its result.
 `useReplySuggestion.ts` owns the browser request and review state.
-Like proactive generation, draft requests append a temporary user-role cue
-after the existing history so providers whose chat templates stop on a trailing
-assistant turn start a new generation. The cue never enters saved history.
+Draft requests end in one user-role message containing the labeled transcript,
+user-side task and response requirements. Proactive generation retains the
+original history roles and appends its temporary user-role cue. Both start a
+new generation on providers that stop on a trailing assistant turn; neither
+request wrapper enters saved history.
+Both speakers receive explicit ownership and anti-echo instructions: answer
+from their own perspective, avoid mirrored challenges and recycled punchlines,
+and add a relevant contribution without forcing a topic change. Necessary
+quotations, names, numbers and technical terms remain allowed. This is prompt
+guidance, not automatic paraphrase rejection or extra LLM retry calls.
 Empty completions and invalid drafts include raw-output diagnostics, completion
 status and finish reason instead of the generic service error.
+
+### Getting to know each other and the user profile
+
+**Conversation settings → Get to know each other · 了解彼此** defaults off.
+When enabled, it replaces both speakers' flirt-focused delivery with attentive
+responses, grounded curiosity and optional questions. The random style cue becomes
+`attentive`; Mira's system persona and proactive cue follow the same focus.
+Existing language, phrase JSON, gesture, swearing and playback settings still apply.
+`backend/src/llm/conversationFocus.ts` owns the shared focus and profile guidance.
+No extra LLM call is made.
+
+**About me · 關於我** is optional free text, bounded to 2000 characters. It and the
+toggle persist in the existing browser settings. The profile is included as
+quoted user-supplied data for Mira's normal/proactive replies and both suggested
+user reply formats, independently of whether the focus toggle is on. It is never
+added to conversation history or changed by generated dialogue. Manual faithful
+rewrites receive only their source text and rewrite contract, not the profile or
+conversation bias. Editing the controls pauses automation and cancels stale
+suggestions/plans; resume auto replies when ready.
+
+The auto-reply guy represents the real user. Prompts allow personal claims from
+the profile and manually supplied/reviewed messages, and treat automatic claims
+as unconfirmed even when repeated. Missing information should lead to a grounded
+reaction or curiosity, not an invented biography or repeated interrogation.
+This is source-aware prompt guidance, not a factual validator or the future
+long-term memory mechanism. Legacy turns without an automatic-origin marker
+cannot be retroactively distinguished; a fresh conversation records provenance
+for every new automatic submission.
+
+### Localized swearing
+
+**Conversation settings → Localized swearing · 地道粗口** is off by default and
+remembered in this browser. It applies to Mira's normal/proactive replies and to
+user-side suggested/automatic replies, including the male spoken-phrase mode.
+The resolved reply language selects Hong Kong Cantonese slang, Mandarin swearing
+or English swearing. Cantonese person-address wording prefers 「柒頭」、「賤人」
+or 「戇鳩仔」 over 「柒人」; fixed example banter is omitted to reduce imitation.
+Manual message rewrites preserve the original tone instead.
+The shared prompt cue appears in each latest request's response requirements;
+turning the mode off explicitly resets the style despite earlier profane history.
+JSON formats, emotion names and gestures remain unchanged. TTS receives the
+resulting dialogue directly; pronunciation and model compliance still depend on
+the configured models. Changing the setting cancels pending user drafts/plans
+and pauses automation; use Resume auto replies when ready.
 
 ### Automatic replies, phrase bubbles and browser preferences
 

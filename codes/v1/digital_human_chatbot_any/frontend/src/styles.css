@@ -1003,12 +1003,42 @@ button {
   background: #fff;
   color: #4d415c;
 }
+.settings-fields .conversation-toggle {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.settings-fields .conversation-toggle input {
+  width: auto;
+  margin: 0;
+  accent-color: #9b6c8e;
+}
+.settings-fields .settings-hint {
+  grid-column: 1 / -1;
+  margin: 0 0 4px;
+}
 .conversation-settings p {
   margin: 8px 0;
   line-height: 1.5;
 }
 .settings-fields select {
   min-width: 0;
+}
+.settings-fields .about-me-field {
+  grid-column: 1 / -1;
+}
+.about-me-field textarea {
+  width: 100%;
+  min-height: 72px;
+  max-height: 180px;
+  resize: vertical;
+  padding: 7px;
+  border: 1px solid #ded6e6;
+  border-radius: 6px;
+  background: #fff;
+  color: #4d415c;
+  font: inherit;
 }
 
 .pose-controls {

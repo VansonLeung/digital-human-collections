@@ -101,7 +101,13 @@ test('manual rewriting preserves source instructions and automatic phrases reuse
   try {
     const history = structuredClone(f.session.history);
     const original = 'I cannot stay past 8, but I want to chat.';
-    const manual = await f.post('prepare', { kind: 'rewrite', text: original });
+    const manual = await f.post('prepare', {
+      kind: 'rewrite',
+      text: original,
+      localizedProfanity: true,
+      getToKnowEachOther: true,
+      aboutMe: 'I like quiet walks.',
+    });
     assert.equal(manual.status, 200);
     assert.equal((await manual.json()).phrases.length, 2);
     const request = f.requests.at(-1);
@@ -109,12 +115,37 @@ test('manual rewriting preserves source instructions and automatic phrases reuse
     assert.match(request.messages.at(-1).content, /Preserve|preserving/);
     assert.ok(request.messages.at(-1).content.includes(JSON.stringify(original)));
     assert.ok(!JSON.stringify(request.messages).includes('CURRENT TURN GUIDANCE'));
-    const automatic = await f.post('prepare', { kind: 'automatic' });
+    assert.ok(!JSON.stringify(request.messages).includes('LOCALIZED PROFANITY MODE'));
+    assert.ok(!JSON.stringify(request.messages).includes('I like quiet walks.'));
+    assert.ok(
+      !JSON.stringify(request.messages).includes('CONVERSATION FOCUS: GET TO KNOW EACH OTHER'),
+    );
+    const automatic = await f.post('prepare', {
+      kind: 'automatic',
+      language: 'yue',
+      localizedProfanity: true,
+      getToKnowEachOther: true,
+      aboutMe: 'I like quiet walks.',
+    });
     assert.equal(automatic.status, 200);
     const messages = f.requests.at(-1).messages;
     assert.match(messages[0].content, /phrases key/);
     assert.match(messages.at(-1).content, /CURRENT TURN GUIDANCE/);
-    assert.deepEqual(messages.slice(1, -1), history);
+    assert.match(messages.at(-1).content, /LOCALIZED PROFANITY MODE: ON/);
+    assert.match(messages.at(-1).content, /CONVERSATION FOCUS: GET TO KNOW EACH OTHER/);
+    assert.match(messages.at(-1).content, /I like quiet walks/);
+    assert.match(messages.at(-1).content, /「屌」、「撚」/);
+    const clean = await f.post('prepare', { kind: 'automatic' });
+    assert.equal(clean.status, 200);
+    assert.match(f.requests.at(-1).messages.at(-1).content, /LOCALIZED PROFANITY MODE: OFF/);
+    assert.equal(messages.length, 2);
+    assert.deepEqual(
+      JSON.parse(messages[1].content.split('\n')[1]),
+      history.map((message) => ({
+        speaker: message.role === 'assistant' ? 'Mira' : 'user',
+        text: message.content,
+      })),
+    );
     assert.ok(!JSON.stringify(messages).includes('"draft":"the suggested user message"'));
     assert.deepEqual(f.session.history, history);
     assert.equal(f.session.revision, 0);
@@ -128,11 +159,11 @@ test('user speech uses the male profile, keeps history unchanged, and scopes med
   const f = await fixture();
   try {
     const history = structuredClone(f.session.history);
-    const response = await f.post('speech', { text: 'Edited phrase.' });
+    const response = await f.post('speech', { text: '屌，真係估你唔到。', language: 'yue' });
     assert.equal(response.status, 200);
     const audio = await response.json();
     assert.equal(f.speech[0].profile, 'user_male');
-    assert.equal(f.speech[0].text, 'Edited phrase.');
+    assert.equal(f.speech[0].text, '屌，真係估你唔到。');
     assert.equal((await fetch(f.base + audio.audioUrl)).status, 200);
     const other = new Session();
     f.context.sessions.set(other.id, other);
@@ -157,6 +188,10 @@ test('missing voice, stale revision and invalid phrase plans fail explicitly wit
     assert.equal(voice.status, 422);
     assert.match((await voice.json()).error, /TTS_USER_MALE_REF_AUDIO/);
     assert.equal(f.speech.length, 0);
+    assert.equal(
+      (await f.post('prepare', { kind: 'automatic', aboutMe: 'x'.repeat(2001) })).status,
+      422,
+    );
     assert.equal(
       (await f.post('prepare', { kind: 'rewrite', text: 'Hello', revision: 99 })).status,
       409,
