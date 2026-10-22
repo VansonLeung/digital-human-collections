@@ -1,4 +1,7 @@
 import express from 'express';
+import { prepareScene, generateSceneContinuation } from './scenes/prepareScene.js';
+import { ConversationStore } from './history/ConversationStore.js';
+import { registerConversationRoutes } from './history/routes.js';
 import multer from 'multer';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -8,6 +11,7 @@ import {
   replyLanguageSchema,
   llmRequestBodySchema,
   conversationPreferencesSchema,
+  performanceProtocolVersion,
 } from '@digital-human/shared';
 import { appRoot, type Config } from './config.js';
 import { Session } from './sessions.js';
@@ -50,8 +54,10 @@ export async function serviceHealth(url: string): Promise<ComponentHealth> {
 }
 
 export async function createApplication(config: Config) {
+  const backendStartedAt = new Date().toISOString();
   const app = express();
   const sessions = new Map<string, Session>();
+  const conversations = new ConversationStore(path.join(config.mediaDir, 'conversations'));
   const media = new MediaStore(config.mediaDir, config.MEDIA_TTL_SECONDS);
   const personas = z
     .array(
@@ -83,6 +89,7 @@ export async function createApplication(config: Config) {
   });
   app.use(express.json({ limit: '32kb' }));
   registerUserSpeechRoutes(app, config, sessions, media);
+  registerConversationRoutes(app, conversations, sessions);
   app.get('/api/health', async (_req, res) => {
     const [asr, tts, lipsync] = await Promise.all([
       serviceHealth(config.ASR_BASE_URL),
@@ -90,6 +97,9 @@ export async function createApplication(config: Config) {
       config.LIPSYNC_PROVIDER === 'amplitude' ? Promise.resolve(true) : rhubarbAvailable(config),
     ]);
     const health: Health = {
+      performanceProtocolVersion,
+      conversationHistoryVersion: 1,
+      backendStartedAt,
       llm: {
         status: config.LLM_MODEL_NAME ? 'ready' : 'unavailable',
         detail: config.LLM_MODEL_NAME
@@ -105,15 +115,30 @@ export async function createApplication(config: Config) {
     res.json(health);
   });
   app.get('/api/personas', (_req, res) => res.json(personas));
-  app.post('/api/sessions', (_req, res) => {
+  app.post('/api/sessions', async (req, res, next) => {
     if (sessions.size >= config.MAX_SESSIONS)
       return res
         .status(503)
         .json({ error: 'Too many local sessions. Close an old session or retry after expiry.' });
+    const input = z.object({ conversationId: z.uuid().optional() }).safeParse(req.body ?? {});
+    if (!input.success) return res.status(422).json({ error: 'Invalid saved conversation id.' });
     const session = new Session();
+    session.archive.store = conversations;
+    try {
+      if (input.data.conversationId) {
+        const saved = await conversations.get(input.data.conversationId);
+        if (!saved) return res.status(404).json({ error: 'Saved conversation not found.' });
+        session.restoreConversation(saved);
+      }
+    } catch (error) {
+      return next(error);
+    }
     session.proactive.delaySeconds = config.PROACTIVE_IDLE_SECONDS;
     sessions.set(session.id, session);
-    res.status(201).json({ id: session.id });
+    res.status(201).json({
+      id: session.id,
+      ...(session.archive.id ? { conversation: session.archive.snapshot() } : {}),
+    });
   });
   app.get('/api/sessions/:id/diagnostics/:diagnosticId', (req, res) => {
     const diagnostic = sessions
@@ -159,6 +184,14 @@ export async function createApplication(config: Config) {
     };
     res.on('close', close);
     try {
+      await prepareScene(
+        config,
+        session,
+        controller.signal,
+        generateSceneContinuation,
+        () => session.suggestion === controller && !session.active && session.revision === revision,
+      );
+      if (controller.signal.aborted) throw new DOMException('Suggestion cancelled.', 'AbortError');
       const draft = await suggestReply(
         config,
         history,
@@ -167,6 +200,9 @@ export async function createApplication(config: Config) {
         parsed.data.localizedProfanity,
         {
           ...parsed.data,
+          memoryContext: session.conversationContext(history.at(-1)?.content ?? ''),
+          progressGuidance: session.progress.guidance(),
+          delivery: parsed.data.naturalVariation ? session.director.next('user') : undefined,
           scene: parsed.data.virtualScenesEnabled ? session.scene.snapshot() : undefined,
         },
       );
@@ -296,6 +332,7 @@ export async function createApplication(config: Config) {
     sessions,
     media,
     personas,
+    conversations,
     async close() {
       clearInterval(cleanup);
       for (const s of sessions.values()) {
@@ -303,6 +340,8 @@ export async function createApplication(config: Config) {
         s.transcription?.abort();
         s.suggestion?.abort();
       }
+      await Promise.all([...sessions.values()].map((session) => session.archive.flush()));
+      await conversations.flush();
       for (const id of sessions.keys()) await media.cleanup(id);
       sessions.clear();
     },

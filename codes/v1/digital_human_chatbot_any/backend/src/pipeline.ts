@@ -1,3 +1,4 @@
+import { generateSceneContinuation, prepareScene } from './scenes/prepareScene.js';
 import { randomUUID } from 'node:crypto';
 import type {
   Command,
@@ -6,6 +7,8 @@ import type {
   LlmRequestBody,
   SpeechPhrase,
   ScenePlan,
+  MemoryCandidate,
+  SceneAgreement,
 } from '@digital-human/shared';
 import type { Config } from './config.js';
 import type { Session, ActiveTurn } from './sessions.js';
@@ -17,6 +20,12 @@ import { UpstreamError } from './services/http.js';
 import { resolveLanguage } from './services/language.js';
 import { JsonReplyParser, ReplyFormatError } from './llm/JsonReplyParser.js';
 import { repeatedReply, RepetitiveReplyError, repetitionAttempts } from './llm/repetition.js';
+import { extractSceneMetadata, needsSceneExtraction } from './scenes/extractSceneMetadata.js';
+import {
+  proposeScene,
+  sceneAgreementTarget,
+  clearSpokenAgreement,
+} from './scenes/SceneDirector.js';
 import { PhraseQueue } from './speech/phraseQueue.js';
 import { saveReplyDiagnostic } from './llm/diagnostics.js';
 
@@ -24,9 +33,17 @@ export type Services = {
   answer: typeof answer;
   synthesize: typeof synthesize;
   mouthCues: typeof mouthCues;
+  sceneMetadata?: typeof extractSceneMetadata;
+  continueScene?: typeof generateSceneContinuation;
 };
 
-export const services: Services = { answer, synthesize, mouthCues };
+export const services: Services = {
+  answer,
+  synthesize,
+  mouthCues,
+  sceneMetadata: extractSceneMetadata,
+  continueScene: generateSceneContinuation,
+};
 
 export async function runTurn(
   config: Config,
@@ -88,11 +105,6 @@ export async function runTurn(
   }
 
   session.configureScenes(command.virtualScenesEnabled ?? false);
-  const advanced = session.scene.beginTurn();
-  if (advanced) {
-    session.send({ type: 'scene.step', ...advanced }, null);
-    session.send({ type: 'scene.state', scene: session.scene.snapshot() }, null);
-  }
   const turn: ActiveTurn = {
     id: randomUUID(),
     controller: new AbortController(),
@@ -109,6 +121,14 @@ export async function runTurn(
     session.proactive.lastActivity = Date.now();
   }
   session.active = turn;
+  const current = () => session.valid(turn);
+  if (adapters.continueScene && session.scene.needsContinuation())
+    await prepareScene(config, session, turn.controller.signal, adapters.continueScene, current);
+  else session.advanceScene();
+  if (!current()) return;
+  turn.sceneVersion = session.scene.snapshot().enabled
+    ? session.scene.snapshot().version
+    : undefined;
   session.send({
     type: 'turn.started',
     displayMode: command.displayMode ?? 'full',
@@ -117,7 +137,6 @@ export async function runTurn(
     origin: proactive ? 'proactive' : 'user',
   });
 
-  const current = () => session.valid(turn);
   const language = resolveLanguage(
     proactive ? '' : command.text,
     command.language,
@@ -222,9 +241,28 @@ export async function runTurn(
   // replies retain streaming; scene metadata is buffered/validated with dialogue.
   const buffered = guarded || command.virtualScenesEnabled === true;
   let pendingPhrases: SpeechPhrase[] = [];
+  let acceptedPhrases: string[] = [];
   let proposedScene: ScenePlan | undefined;
+  let memoryCandidates: MemoryCandidate[] = [];
+  let agreement: SceneAgreement | undefined;
+  let progress: import('./conversation/ConversationProgress.js').ProgressUpdate | undefined;
+  const naturalVariation = command.naturalVariation ?? true;
+  const delivery = naturalVariation ? session.director.next('mira') : undefined;
+  const reactions = session.reactions.plan(command.miraAngryHopEnabled ?? true);
   const emitPhrase = (phrase: SpeechPhrase) => {
     if (!current()) return;
+    const selected = phrase.performance;
+    const applied = reactions.apply(selected, command.speech);
+    phrase = { ...phrase, performance: applied.performance };
+    session.send({
+      type: 'performance.phrase',
+      phraseIndex: parsedPhrases,
+      text: phrase.text,
+      selected,
+      applied: phrase.performance,
+      decision: applied.decision,
+      speech: command.speech,
+    });
     session.send({ type: 'answer.phrase', phraseIndex: parsedPhrases++, text: phrase.text });
     if (command.speech) queue.push(phrase);
   };
@@ -234,6 +272,7 @@ export async function runTurn(
         if (current() && !buffered) session.send({ type: 'answer.delta', text });
       },
       (phrase) => {
+        acceptedPhrases.push(phrase.text);
         if (buffered) pendingPhrases.push(phrase);
         else emitPhrase(phrase);
       },
@@ -242,6 +281,11 @@ export async function runTurn(
             proposedScene = proposal;
           }
         : undefined,
+      (metadata) => {
+        memoryCandidates = metadata.memories;
+        agreement = metadata.sceneAgreement;
+        progress = metadata.conversationProgress;
+      },
     );
   }
   let parser = createParser();
@@ -263,7 +307,11 @@ export async function runTurn(
     for (let attempt = 0; attempt < attempts.length; attempt++) {
       turn.controller.signal.throwIfAborted();
       pendingPhrases = [];
+      acceptedPhrases = [];
       proposedScene = undefined;
+      memoryCandidates = [];
+      agreement = undefined;
+      progress = undefined;
       parser = createParser();
       rawOutput = '';
       outputComplete = false;
@@ -291,9 +339,15 @@ export async function runTurn(
         turn.controller.signal,
         {
           proactive,
+          naturalVariation,
+          delivery,
+          memoryContext: session.conversationContext(history.at(-1)?.content ?? ''),
+          progressGuidance: session.progress.guidance(),
           localizedProfanity: command.localizedProfanity ?? false,
           getToKnowEachOther: command.getToKnowEachOther ?? false,
-          aboutMe: command.aboutMe ?? '',
+          miraBehavior: command.miraBehavior ?? '',
+          miraAngryHopEnabled: command.miraAngryHopEnabled ?? true,
+          angryHopCooldown: session.reactions.remaining,
           virtualScenesEnabled: command.virtualScenesEnabled ?? false,
           autoEnterScenes: command.autoEnterScenes ?? false,
           scene: command.virtualScenesEnabled ? session.scene.snapshot() : undefined,
@@ -335,8 +389,75 @@ export async function runTurn(
       session.send({ type: 'answer.delta', text });
       for (const phrase of pendingPhrases) emitPhrase(phrase);
     }
-    if (proposedScene && session.scene.propose(proposedScene))
-      session.send({ type: 'scene.state', scene: session.scene.snapshot() }, null);
+    const userText = proactive ? '' : command.text;
+    if (
+      command.virtualScenesEnabled &&
+      !proposedScene &&
+      (!agreement || !agreement.proposalId) &&
+      adapters.sceneMetadata &&
+      needsSceneExtraction(session.scene.snapshot(), userText, text, history)
+    ) {
+      try {
+        const extracted = await adapters.sceneMetadata(
+          config,
+          session.scene.snapshot(),
+          userText,
+          text,
+          turn.controller.signal,
+          history,
+        );
+        if (!current()) return;
+        proposedScene = extracted.proposal;
+        agreement = extracted.agreement ?? agreement;
+      } catch (error) {
+        if (!current()) return;
+        console.warn(
+          'Optional scene metadata extraction failed; dialogue continues.',
+          error instanceof Error ? error.name : 'Unknown error',
+        );
+      }
+    }
+    if (command.virtualScenesEnabled && !agreement)
+      agreement = clearSpokenAgreement(session.scene.snapshot(), userText, text, !!proposedScene);
+    const quotedAgreement =
+      agreement &&
+      userText.includes(agreement.offerQuote) &&
+      text.includes(agreement.acceptanceQuote);
+    const newProposal =
+      command.virtualScenesEnabled && !agreement?.proposalId
+        ? proposeScene(session.scene, proposedScene, !!quotedAgreement)
+        : undefined;
+    if (newProposal) session.send({ type: 'scene.state', scene: session.scene.snapshot() }, null);
+    const accepted = command.virtualScenesEnabled
+      ? sceneAgreementTarget(session.scene, agreement, userText, text, newProposal)
+      : undefined;
+    const memories = memoryCandidates;
+    const progressUpdate = progress;
+    turn.onSuccess = () => {
+      session.reactions.complete(reactions.hopped);
+      session.progress.collect(progressUpdate, userText, text);
+      if (accepted && session.scene.agree(accepted.id, accepted.timing))
+        session.send({ type: 'scene.state', scene: session.scene.snapshot() }, null);
+      if (
+        session.memory.collect(memories, {
+          turnId: turn.id,
+          manualText: !proactive && !command.automatic ? command.text : '',
+          counterpartText: userText,
+          reply: text,
+        })
+      )
+        session.send({ type: 'memory.state', memories: session.memory.snapshot() }, null);
+      session.archive.complete({
+        id: turn.id,
+        ...(!proactive
+          ? { input: command.text, generated: command.automatic, userPhrases: command.userPhrases }
+          : {}),
+        phrases: acceptedPhrases,
+        text,
+        personaName: personas.find((persona) => persona.id === command.personaId)!.name,
+        settings: command,
+      });
+    };
 
     session.history = [...history, { role: 'assistant' as const, content: text }].slice(-12);
     if (proactive) session.revision++;

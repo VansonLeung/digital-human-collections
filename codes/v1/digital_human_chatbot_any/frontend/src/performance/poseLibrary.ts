@@ -14,6 +14,7 @@ const relaxedArms = {
 /** Offsets are authored against the adapter's relaxed standing pose. Contact
  * targets let each model's arm lengths determine the final elbow angles. */
 export const poseLibrary: Record<PoseName, PosePreset> = {
+  angry_hop: { fullBody: false, pose: { bones: { ...relaxedArms }, expressions: { angry: 0.9 } } },
   tsundere_turn: {
     fullBody: false,
     pose: {

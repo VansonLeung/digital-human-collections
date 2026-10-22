@@ -1204,3 +1204,127 @@ button {
   background: #ece3f1;
   color: #70577e;
 }
+
+.conversation-memory {
+  margin-bottom: 12px;
+}
+.memory-row,
+.memory-history {
+  display: grid;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line, #e8e3dd);
+}
+.memory-row label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+.memory-row textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid #ddd5e8;
+  border-radius: 6px;
+  font: inherit;
+}
+.memory-row small,
+.memory-history small {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  color: #74687c;
+}
+
+.performance-inspector {
+  margin-block: 0.75rem;
+}
+.performance-table {
+  overflow-x: auto;
+  max-height: 22rem;
+}
+.performance-table table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  width: 100%;
+}
+.performance-table th,
+.performance-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.45rem;
+  border-bottom: 1px solid #ddd;
+}
+.performance-inspector ul {
+  font-size: 0.8rem;
+  max-height: 10rem;
+  overflow-y: auto;
+}
+
+.conversation-history {
+  margin: 0 1.25rem 0.75rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border, #e5e2dd);
+  border-radius: 12px;
+  font-size: 0.82rem;
+}
+
+.conversation-history summary {
+  cursor: pointer;
+}
+.history-actions {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.75rem 0;
+}
+.history-actions button {
+  padding: 0.35rem 0.55rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.history-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.history-actions a,
+.history-list a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.6rem 0 0;
+  max-height: 220px;
+  overflow: auto;
+}
+.history-list li {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid #eee;
+}
+.history-list span {
+  color: #777;
+  font-size: 0.72rem;
+}
+.history-list [aria-current='page'] {
+  font-weight: 600;
+}
+.history-url {
+  display: grid;
+  gap: 0.3rem;
+}
+.history-url input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 0.4rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}

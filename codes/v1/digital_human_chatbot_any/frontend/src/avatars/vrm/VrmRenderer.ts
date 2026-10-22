@@ -1,3 +1,4 @@
+import type { PerformancePlayback, PoseActionEvent } from '../../performance/events';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
@@ -99,6 +100,13 @@ export class VrmRenderer implements AvatarRenderer {
 
   beginPhrase(value: PhrasePerformance, duration: number) {
     this.performance.beginPhrase(value, duration);
+  }
+
+  setPlaybackState(state: PerformancePlayback) {
+    this.performance.setPlaybackState(state);
+  }
+  setPerformanceObserver(observer: (event: PoseActionEvent) => void) {
+    this.performance.setPerformanceObserver(observer);
   }
 
   setPlaybackTime(seconds: number) {

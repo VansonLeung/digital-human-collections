@@ -1,3 +1,5 @@
+import type { DeliveryPlan } from '../conversation/TurnDirector.js';
+
 type ContextMessage = { role: 'user' | 'assistant'; content: string };
 export type TurnKind = 'reply' | 'draft' | 'proactive';
 
@@ -44,6 +46,7 @@ export function turnGuidance(
   kind: TurnKind,
   random: () => number = Math.random,
   getToKnowEachOther = false,
+  delivery?: DeliveryPlan,
 ) {
   const counterpart = kind === 'draft' ? 'assistant' : 'user';
   const latest = history.at(-1);
@@ -58,12 +61,17 @@ export function turnGuidance(
   const repeatedQuestion = latestQuestions.some((question) => priorQuestions.has(question));
   const sample = random();
   const roll = Number.isFinite(sample) ? Math.max(0, Math.min(1, sample)) : 0;
-  const style = getToKnowEachOther
+  const style = delivery
     ? {
-        name: 'attentive',
-        cue: 'Notice what was actually shared and respond with understanding. No flourish, teasing or question is required.',
+        name: delivery.tone,
+        cue: 'Use the natural variation cue below only when the context suits it. Attentiveness remains part of the conversation focus.',
       }
-    : (styles.find((style) => roll < style.until) ?? styles.at(-1)!);
+    : getToKnowEachOther
+      ? {
+          name: 'attentive',
+          cue: 'Notice what was actually shared and respond with understanding. No flourish, teasing or question is required.',
+        }
+      : (styles.find((style) => roll < style.until) ?? styles.at(-1)!);
   const focus =
     kind === 'proactive'
       ? 'check_pending_questions'

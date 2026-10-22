@@ -19,6 +19,7 @@ export function useUserMessageSpeech(options: {
     context: UserSpeechContext,
     group: string,
     automatic: boolean,
+    phrases: string[],
   ) => boolean;
   onError: (message: string, diagnostic?: ReplyDiagnostic) => void;
 }) {
@@ -44,7 +45,10 @@ export function useUserMessageSpeech(options: {
     options.context.virtualScenesEnabled,
     options.context.autoEnterScenes,
     options.context.autoRecoverStalls,
+    options.context.naturalVariation,
     options.context.aboutMe,
+    options.context.miraBehavior,
+    options.context.miraAngryHopEnabled,
     options.draft,
     options.personaId,
     options.connected,

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { emotionSchema, gestureNameSchema } from './performance.js';
+import { emotionSchema, gestureNameSchema, reactionSchema } from './performance.js';
 
 export const replyLimits = { characters: 16000, phrases: 32, phraseCharacters: 600, depth: 32 };
 
@@ -14,6 +14,7 @@ const replyEmotionSchema = z.preprocess((value) => {
 export const llmPhraseSchema = z.strictObject({
   phrase: replyPhraseTextSchema,
   emotion: replyEmotionSchema,
+  reaction: reactionSchema.optional(),
   gestures: z
     .array(
       z.strictObject({

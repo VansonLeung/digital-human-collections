@@ -12,11 +12,33 @@ import {
 } from '@pixiv/three-vrm';
 import { poseNameSchema, llmPhraseSchema } from '@digital-human/shared';
 import { PoseController } from '../../frontend/src/performance/PoseController.js';
+import { angryHop } from '../../frontend/src/performance/motionLibrary.js';
+import { PerformanceController } from '../../frontend/src/performance/PerformanceController.js';
 import { solveTwoBoneIK } from '../../frontend/src/avatars/vrm/TwoBoneIK.js';
+import { crossedHandOrientation } from '../../frontend/src/avatars/vrm/VrmPoseConstraints.js';
 import { VrmGazeController } from '../../frontend/src/avatars/vrm/VrmGazeController.js';
 import type { PerformancePose } from '../../frontend/src/performance/poseComposer.js';
 
 const base: PerformancePose = { bones: {}, expressions: { happy: 0.6, blink: 0.2 } };
+
+test('crossed wrists keep palms inward and thumbs up through body turns, without an ambiguous half-turn', () => {
+  for (const yaw of [-1, 0, 0.52, 1]) {
+    const chest = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.1, yaw, 0.15));
+    const wrist = crossedHandOrientation(chest);
+    const palm = new THREE.Vector3(0, -1, 0).applyQuaternion(wrist);
+    const inward = new THREE.Vector3(0, 0, -1).applyQuaternion(chest);
+    const thumb = new THREE.Vector3(0, 0, 1).applyQuaternion(wrist);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(chest);
+    assert.ok(palm.dot(inward) > 0.999);
+    assert.ok(thumb.dot(up) > 0.999);
+    for (const side of [-1, 1])
+      assert.ok(
+        new THREE.Vector3(side, 0, 0)
+          .applyQuaternion(wrist)
+          .dot(new THREE.Vector3(-side, 0, 0).applyQuaternion(chest)) > 0.999,
+      );
+  }
+});
 
 test('all pose names validate as LLM gestures without changing phrase or emotion', () => {
   for (const name of poseNameSchema.options) {
@@ -49,6 +71,50 @@ test('previews hold without speech, preserve facial weights, then release to idl
   for (let i = 0; i < 20; i++) pose = controller.update(base, 0.1, 0);
   assert.deepEqual(pose, base);
   assert.ok(controller.fullBodyWeight < 0.01);
+});
+
+test('angry hop uses closed fists and normal framing, with three bounded hops and a clean release', () => {
+  let flights = 0;
+  let airborne = false;
+  for (let time = 0; time < 4; time += 0.01) {
+    const pose = angryHop(time);
+    const next = (pose.hipsDrop ?? 0) < -0.0001;
+    if (next && !airborne) flights++;
+    airborne = next;
+    assert.ok((pose.hipsDrop ?? 0) >= -0.0351 && (pose.hipsDrop ?? 0) <= 0.0091);
+    if (next) assert.equal(pose.contacts?.feet, false);
+    assert.ok(!('aa' in pose.expressions));
+  }
+  assert.equal(flights, 3);
+  assert.equal(angryHop(4).hipsDrop, 0);
+  const controller = new PoseController();
+  controller.beginPhrase([{ name: 'angry_hop', strength: 1 }]);
+  controller.playbackTime(0.7);
+  const jumping = controller.update(base, 0.1, 1);
+  assert.ok(jumping.hipsDrop! < 0);
+  assert.ok(jumping.expressions.angry! > 0.8);
+  for (const side of ['left', 'right'] as const) {
+    const mirror = side === 'left' ? -1 : 1;
+    for (const finger of ['Index', 'Middle', 'Ring', 'Little'] as const)
+      assert.ok(jumping.bones[`${side}${finger}Intermediate`]!.z * mirror > 1.3);
+    assert.ok(jumping.bones[`${side}ThumbMetacarpal`]!.y * -mirror > 0.6);
+  }
+  assert.equal(controller.fullBodyWeight, 0);
+  for (let i = 0; i < 10; i++)
+    assert.deepEqual(controller.update(base, 0.1, 1).bones, jumping.bones);
+  controller.stop();
+  for (let i = 0; i < 20; i++) controller.update(base, 0.1, 1);
+  assert.deepEqual(controller.update(base, 0.1, 1), base);
+  controller.preview('angry_hop', 1, 3);
+  for (let i = 0; i < 30; i++) {
+    controller.update(base, 0.1, 0);
+    assert.equal(controller.fullBodyWeight, 0);
+  }
+  const facialOnly = new PerformanceController();
+  facialOnly.setSpeaking(true);
+  facialOnly.beginPhrase({ emotion: 'angry', gestures: [] }, 3);
+  facialOnly.setPlaybackTime(0.7);
+  assert.equal(facialOnly.update(0.1, 0).hipsDrop ?? 0, 0);
 });
 
 test('LLM poses follow audio time across pause/resume and Stop discards queued replacements', () => {

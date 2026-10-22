@@ -32,13 +32,14 @@ async function fixture(mode: 'ready' | 'timeout' | 'exit' = 'ready') {
       `
 const http=require('node:http'),fs=require('node:fs');
 const name=${JSON.stringify(name.toUpperCase())};
-fs.writeFileSync('started.json',JSON.stringify({cwd:process.cwd(),port:process.env[name+'_PORT'],host:process.env[name+'_HOST'],unbuffered:process.env.PYTHONUNBUFFERED}));
 let ready=false;
 const server=http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({status:ready?'ready':'starting',busy:false}));});
 server.listen(Number(process.env[name+'_PORT']),process.env[name+'_HOST']);
 if(${JSON.stringify(mode)}!=='timeout')setTimeout(()=>{ready=true;},100);
 if(${JSON.stringify(mode)}==='exit' && name==='ASR')setTimeout(()=>process.exit(7),900);
 process.on('SIGTERM',()=>{fs.writeFileSync('stopped','yes');server.close(()=>process.exit(0));});
+// Publish startup only after this fixture can observe graceful shutdown.
+fs.writeFileSync('started.json',JSON.stringify({cwd:process.cwd(),port:process.env[name+'_PORT'],host:process.env[name+'_HOST'],unbuffered:process.env.PYTHONUNBUFFERED}));
 `,
     );
   }

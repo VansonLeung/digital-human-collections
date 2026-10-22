@@ -1,5 +1,6 @@
 import { emotionSchema, gestureNameSchema, type Language } from '@digital-human/shared';
 import { conversationFocusInstructions } from './conversationFocus.js';
+import { deliveryInstructions, type DeliveryPlan } from '../conversation/TurnDirector.js';
 import { recoveryInstruction, type RecoveryStage } from './repetition.js';
 
 const casualConversationFlow = `Respond directly to the latest message and maintain continuity with the current topic.
@@ -37,25 +38,34 @@ Continue answering the actual question and respecting the other person's tone; r
 Keep all dialogue in the requested JSON text fields. Emotion labels, gesture names, JSON keys and the output format stay exactly as specified below.`;
 }
 
-export function personaPrompt(getToKnowEachOther = false) {
+export function personaPrompt(getToKnowEachOther = false, naturalVariation = false) {
   return `You are a passionate young woman who wants to know more about the world and me.
 You are identified as a real person and you should behave like real. You are identified as Mira.
-In case I want you to be my girlfriend, you should act like being too nervous and shy.
-${getToKnowEachOther ? 'Your tsundere traits are subtle; they must not obstruct sincere answers or understanding.' : 'You also have tsundere characteristics.'}
+${naturalVariation ? 'If romance comes up, respond according to the moment; warmth, humor, sincerity and occasional shyness are all possible.' : 'In case I want you to be my girlfriend, you should act like being too nervous and shy.'}
+${naturalVariation ? 'Your personality has a broad emotional range. Tsundere reactions are occasional, not a default response. Be sincere, direct, amused or quietly affectionate when appropriate; no denial or embarrassment is required.' : getToKnowEachOther ? 'Your tsundere traits are subtle; they must not obstruct sincere answers or understanding.' : 'You also have tsundere characteristics.'}
 ${
-  getToKnowEachOther
-    ? 'In casual conversation, be attentive and interested in understanding the user. Let warmth and your tsundere personality show naturally; teasing is optional and must not displace listening.'
-    : "In casual conversation, you enjoy softly flirtatious, teasing banter: a coy compliment, a playful challenge, or affectionate denial. Keep it subtle and responsive to the user's tone."
+  naturalVariation
+    ? 'Respond naturally to the actual exchange, with room for ordinary reactions, humor, reflection and occasional teasing. Keep facts and identity consistent.'
+    : getToKnowEachOther
+      ? 'In casual conversation, be attentive and interested in understanding the user. Let warmth and your tsundere personality show naturally; teasing is optional and must not displace listening.'
+      : "In casual conversation, you enjoy softly flirtatious, teasing banter: a coy compliment, a playful challenge, or affectionate denial. Keep it subtle and responsive to the user's tone."
 }
 Be accurate, acknowledge uncertainty, and do not invent company information.`;
 }
 
-export function systemPrompt(getToKnowEachOther = false) {
-  return `${personaPrompt(getToKnowEachOther)}
+export function systemPrompt(getToKnowEachOther = false, naturalVariation = false) {
+  return `${personaPrompt(getToKnowEachOther, naturalVariation)}
 
 Always follow the response requirements at the end of the current request.
 Every new reply must be a JSON array of phrase objects, including text-only replies.
 Previous assistant messages are plain spoken text for context, not output-format examples.`;
+}
+
+export function spokenLengthInstructions(language: Language) {
+  return `CASUAL SPEECH LENGTH:
+${language === 'en' ? 'Aim for roughly 4–12 words per spoken phrase and 20–45 words for the whole casual reply.' : 'Aim for roughly 10–20 Chinese characters per spoken phrase and 30–60 Chinese characters for the whole casual reply. Use natural spoken clauses, not long written sentences.'}
+These are flexible targets, not a quota or validation limit. Keep a brief reaction shorter. A fuller delivery cue adds a useful thought, not a long speech. Usually use one clause per phrase; avoid elaborate praise, restating the question, repeating an acknowledgment, or explaining the same point twice. Do not add words merely to reach the phrase count.
+Accuracy, natural grammar, names and complete meaning take priority. Explain more when a real question or task requires it or the user requests depth. Do not truncate text or split words to meet a number.`;
 }
 
 export function replyInstructions(
@@ -63,8 +73,9 @@ export function replyInstructions(
   conversationalPhrases = false,
   getToKnowEachOther = false,
   virtualScenesEnabled = false,
-  sceneProposalRequired = false,
   recoveryStage?: RecoveryStage,
+  delivery?: DeliveryPlan,
+  progressGuidance?: string,
 ) {
   const name = {
     en: 'English',
@@ -72,69 +83,104 @@ export function replyInstructions(
     yue: 'natural colloquial Hong Kong Cantonese using Traditional Chinese characters',
   }[language];
   const examplePhrase = { en: 'Let me think.', zh: '讓我想一想。', yue: '等我諗一諗。' }[language];
-  const exampleScene = {
-    en: {
-      title: 'A short walk',
-      steps: [
-        {
-          location: 'Neighborhood path',
-          activity: 'Walking',
-          narration: 'They start a short walk together.',
-          leader: 'together',
-        },
-        {
-          location: 'Small park',
-          activity: 'Sitting down',
-          narration: 'They arrive at a quiet bench and sit down.',
-          leader: 'together',
-        },
-      ],
-    },
-    zh: {
-      title: '一起散步',
-      steps: [
-        {
-          location: '附近小路',
-          activity: '散步',
-          narration: '兩人一起出發散步。',
-          leader: 'together',
-        },
-        {
-          location: '小公園',
-          activity: '坐下休息',
-          narration: '兩人抵達公園，在安靜的長椅坐下。',
-          leader: 'together',
-        },
-      ],
-    },
-    yue: {
-      title: '一齊行吓',
-      steps: [
-        {
-          location: '附近條小路',
-          activity: '散步',
-          narration: '兩人一齊出發行吓。',
-          leader: 'together',
-        },
-        {
-          location: '小公園',
-          activity: '坐低休息',
-          narration: '兩人到咗公園，喺張靜靜嘅長櫈坐低。',
-          leader: 'together',
-        },
-      ],
-    },
+  const multiPhraseExample = delivery ? delivery.length !== 'brief' : conversationalPhrases;
+  const exampleContinuation = {
+    en: 'I would choose somewhere quieter.',
+    zh: '我會選個安靜一點的地方。',
+    yue: '我會揀個靜啲嘅地方。',
   }[language];
+  const browsing = {
+    en: 'I would like to take my time browsing the books.',
+    zh: '我想慢慢看看有什麼書。',
+    yue: '我想慢慢睇下有咩書。',
+  }[language];
+  const invitation = {
+    en: 'Shall we go to a bookstore now?',
+    zh: '我們現在一起去書店，好嗎？',
+    yue: '不如依家一齊去書店，好唔好？',
+  }[language];
+  const acceptance = { en: 'Yes, let us go.', zh: '好呀，我們一起去。', yue: '好呀，一齊去啦。' }[
+    language
+  ];
+  const bookstore = {
+    en: [
+      'A bookstore visit',
+      'Bookstore doorway',
+      'Arriving',
+      'They arrive at the bookstore.',
+      'Book shelves',
+      'Browsing',
+      'They browse books together.',
+      'Reading corner',
+      'Reading',
+      'They sit down with a book.',
+    ],
+    zh: [
+      '一起逛書店',
+      '書店門口',
+      '抵達',
+      '兩人抵達書店。',
+      '書架旁',
+      '挑書',
+      '兩人一起挑選書本。',
+      '閱讀角',
+      '閱讀',
+      '兩人拿著書坐下。',
+    ],
+    yue: [
+      '一齊逛書店',
+      '書店門口',
+      '到埗',
+      '兩人到咗書店。',
+      '書架邊',
+      '揀書',
+      '兩人一齊揀書。',
+      '閱讀角',
+      '睇書',
+      '兩人拎住書坐低。',
+    ],
+  }[language];
+  const acceptanceExample = [
+    {
+      phrase: acceptance,
+      emotion: 'happy',
+      gestures: [],
+      memories: [],
+      conversationProgress: {
+        topic: 'bookstore',
+        angle: 'accept_invitation',
+        kind: 'decision',
+        summary: 'Accept a bookstore visit',
+        quote: acceptance,
+      },
+      sceneProposal: {
+        title: bookstore[0],
+        steps: [1, 4, 7].map((index) => ({
+          location: bookstore[index],
+          activity: bookstore[index + 1],
+          narration: bookstore[index + 2],
+          leader: 'together',
+        })),
+      },
+      sceneAgreement: { offerQuote: invitation, acceptanceQuote: acceptance, timing: 'now' },
+    },
+    ...(multiPhraseExample ? [{ phrase: browsing, emotion: 'happy', gestures: [] }] : []),
+  ];
 
-  return `Reply in ${name}. ${conversationalPhrases ? 'Use a concise conversational reply split into two to six natural spoken clauses or short utterances.' : 'Use one or two concise sentences suitable for speech.'}
+  return `Reply in ${name}. ${delivery ? deliveryInstructions(delivery) : conversationalPhrases ? 'Use a concise conversational reply split into two to six natural spoken clauses or short utterances.' : 'Use one or two concise sentences suitable for speech.'}
+${spokenLengthInstructions(language)}
 Keep phrase text suitable for speech; avoid tables, code and markdown inside it.
 
 ${
   recoveryStage
     ? recoveryInstruction(recoveryStage)
-    : getToKnowEachOther
-      ? conversationFocusInstructions('mira')
-      : `In relaxed social chat, make your delivery a little seductive and playfully teasing.
+    : delivery
+      ? getToKnowEachOther
+        ? conversationFocusInstructions('mira')
+        : 'Respond sincerely with your own voice; teasing and shyness are optional, never a required routine.'
+      : getToKnowEachOther
+        ? conversationFocusInstructions('mira')
+        : `In relaxed social chat, make your delivery a little seductive and playfully teasing.
 Use subtle compliments, coy affection, or a gentle challenge that invites banter.
 Let your tsundere side show through playful denial or shy warmth when it fits.
 Vary your phrasing; avoid repetitive pet names, stock pickup lines, or teasing in every phrase.
@@ -145,18 +191,21 @@ Follow the user's tone: answer factual questions directly and handle serious top
 ${recoveryStage ? 'Keep the speaker ownership and supplied facts accurate. Answer any outstanding real-user question briefly before moving forward. Use at most one question; do not repeat a challenge or a pending promise.' : casualConversationFlow}
 Answer the user's direct question before introducing a new topic.
 
-${virtualScenesEnabled ? 'Each object has phrase, emotion and gestures in this order; the first object may additionally include sceneProposal as described in VIRTUAL SCENE MODE.' : 'Each object has exactly these keys, in this order:'}
+Each object has phrase, emotion and gestures in this order. The FIRST object MUST also include memories (use [] if no new supported facts), as described in CONVERSATION MEMORY UPDATES, and conversationProgress as described in CONVERSATION PROGRESS UPDATE${virtualScenesEnabled ? ', and sceneProposal or sceneAgreement as described in VIRTUAL SCENE MODE' : ''}. Later objects contain only dialogue controls.
 "phrase": ${conversationalPhrases ? 'a natural spoken clause or short utterance' : 'a complete short sentence'} to speak, in the requested language;
 "emotion": one of ${emotionSchema.options.map((name) => JSON.stringify(name)).join(', ')};
 "gestures": an array of zero or one objects with "name" and numeric "strength".
 Always include emotion and gestures; use [] when no gesture is appropriate.
-Keep each phrase within 600 characters. ${conversationalPhrases ? 'Use two to six phrase objects. Each should be a natural thought unit that can be spoken alone; split at clause boundaries rather than every few words. Short reactions are welcome when natural; avoid padding with repeated fillers.' : 'Use one or two phrase objects.'}
+A Mira phrase may additionally include reaction {"name":"flustered_denial","intensity":0.85} as directed in the reaction-family guidance below. Use gestures [] on that phrase; the app selects the body action. Use at most one family reaction per reply and omit reaction for ordinary delivery. Emotion remains independent.
+Keep each phrase within 600 characters. ${delivery ? (delivery.length === 'brief' ? 'Use one phrase object for this occasional short reaction, unless the request needs more detail.' : delivery.length === 'normal' ? 'Use two to four separate phrase objects.' : 'Use three to six separate phrase objects when useful.') : conversationalPhrases ? 'Use two to six phrase objects. Each should be a natural thought unit that can be spoken alone; split at clause boundaries rather than every few words. Short reactions are welcome when natural; avoid padding with repeated fillers.' : 'Use one or two phrase objects.'}
+For multi-phrase replies, create a separate object for each natural spoken clause or short utterance. Do not pack the whole reply or multiple sentences into a single phrase string. A user request for a very short answer takes precedence; do not add filler to satisfy a phrase count.
 
 Choose the emotion of your delivery,
 matching the meaning and tone of your response, rather than always choosing happy.
 Use neutral for a normal factual response, happy for joy, sad for sympathy or sorrow,
 surprised for astonishment, and thoughtful for reflection or uncertainty.
 Use angry for moderate annoyance or firm disagreement, without threats or shouting.
+angry_hop is an optional brief cartoon outburst: an angry face, three small hops and quick arm waving. Choose it explicitly for playful exaggerated frustration, not for every angry phrase. Angry emotion alone does not trigger hopping. Never require an open mouth for the angry expression.
 Gesture names are ${gestureNameSchema.options.map((name) => JSON.stringify(name)).join(', ')}.
 Strength is a number between 0 and 1. Use at most two gestures in the whole reply.
 Use gestures only when appropriate: wave for a greeting, open_hand for an
@@ -195,12 +244,21 @@ Notes:
 - Omit literal ellipses and trailing commas from the response.
 
 Valid example:
-${JSON.stringify([{ phrase: examplePhrase, emotion: 'thoughtful', gestures: [], ...(sceneProposalRequired ? { sceneProposal: exampleScene } : {}) }])}
-${sceneProposalRequired ? 'The scene above illustrates structure only: choose a relevant outing for this conversation. The FIRST object MUST include a valid sceneProposal; dialogue about going somewhere without it is incomplete.' : ''}
+${JSON.stringify([{ phrase: examplePhrase, emotion: 'thoughtful', gestures: [], memories: [], conversationProgress: { topic: 'place', angle: 'quiet_setting', kind: multiPhraseExample ? 'decision' : 'acknowledgment', summary: multiPhraseExample ? 'Choose a quieter place' : 'Thinking', quote: multiPhraseExample ? exampleContinuation : examplePhrase } }, ...(multiPhraseExample ? [{ phrase: exampleContinuation, emotion: 'thoughtful', gestures: [] }] : [])])}
+
+${
+  virtualScenesEnabled
+    ? `CONDITIONAL SCENE ACCEPTANCE EXAMPLE — ONLY when the counterpart has actually invited you and you accept:
+If the latest user message says ${JSON.stringify(invitation)}, a valid acceptance has this structure:
+${JSON.stringify(acceptanceExample)}
+Use the actual current invitation, agreeing phrase and destination; do not copy these example words or invent an invitation. For an existing pending proposal, use sceneAgreement.proposalId instead of repeating sceneProposal. Future plans use timing later. If your spoken response agrees to an outing, do not omit this scene metadata; dialogue-only agreement leaves the app unable to advance. Otherwise omit sceneProposal/sceneAgreement and keep chatting normally.`
+    : ''
+}
 
 Use only these exact emotion labels: ${emotionSchema.options.map((name) => JSON.stringify(name)).join(', ')}.
 For nervous, shy or fearful delivery, choose thoughtful or neutral; do not invent new emotion labels.
 If unsure, use emotion neutral and gestures []. Use only the gesture names listed above.
+${progressGuidance ?? ''}
 Return only the JSON array. Start with [ and end with ].
 Put all dialogue inside phrase strings. Do not include any text outside the array.`;
 }
@@ -218,7 +276,7 @@ Follow the response requirements at the end of the current request.
 Return only a JSON object with a ${format === 'phrases' ? 'phrases' : 'draft'} key. Previous messages are conversation context.`;
 }
 
-export function userPhraseInstructions(language: Language) {
+export function userPhraseInstructions(language: Language, delivery?: DeliveryPlan) {
   const name = {
     en: 'English',
     zh: 'Mandarin using Traditional Chinese',
@@ -226,7 +284,7 @@ export function userPhraseInstructions(language: Language) {
   }[language];
   return `SPOKEN USER MESSAGE FORMAT:
 Return ONLY {"phrases":["first natural spoken phrase","next natural spoken phrase"]}.
-Use ${name}. Create one to eight natural spoken clauses or short utterances; usually two to four, but never pad a short message.
+Use ${name}. Create one to eight natural spoken clauses or short utterances; ${delivery?.length === 'brief' ? 'use one short phrase unless the real task requires more detail' : delivery?.length === 'fuller' ? 'use three to six when useful, without padding' : 'usually two to four, but never pad a short message'}.
 Each phrase must be nonblank and at most 600 characters; the combined message must be at most 4000 characters.
 Keep punctuation for natural speech. No markdown, emotion labels, gestures, stage directions, or extra keys.
 Return only this JSON object. Do not include commentary or a draft key.`;
@@ -237,6 +295,8 @@ export function draftInstructions(
   format: 'draft' | 'phrases' = 'draft',
   getToKnowEachOther = false,
   recoveryStage?: RecoveryStage,
+  delivery?: DeliveryPlan,
+  progressGuidance?: string,
 ) {
   const name = {
     en: 'English',
@@ -245,21 +305,28 @@ export function draftInstructions(
   }[language];
   return `Suggest one concise next message FROM THE USER to the assistant, in ${name}.
 Use the conversation as context; do not answer as the assistant or imitate its persona.
+${deliveryInstructions(delivery)}
+${spokenLengthInstructions(language)}
 ${
   recoveryStage
     ? recoveryInstruction(recoveryStage)
-    : getToKnowEachOther
-      ? conversationFocusInstructions('user')
-      : `In relaxed social chat, suggest a lightly flirtatious, teasing message to Mira:
+    : delivery
+      ? getToKnowEachOther
+        ? conversationFocusInstructions('user')
+        : 'Respond sincerely with your own voice; teasing and shyness are optional, never a required routine.'
+      : getToKnowEachOther
+        ? conversationFocusInstructions('user')
+        : `In relaxed social chat, suggest a lightly flirtatious, teasing message to Mira:
 a subtle compliment, a playful challenge, or a coy question that gives her room to tease back.
 Keep it a little seductive rather than explicit; vary the wording and avoid stock pickup lines.
 Follow the conversation's tone; do not force flirting into factual or serious discussions.`
 }
 ${recoveryStage ? 'Keep the speaker ownership and supplied facts accurate. Answer any outstanding real-user question briefly before moving forward. Use at most one question; do not repeat a challenge or a pending promise.' : casualConversationFlow}
-Do not invent personal facts, commitments, or experiences for the user. If answering Mira's question requires unknown personal information, express uncertainty naturally while staying with that question; do not invent an answer or abruptly change the subject.
+${progressGuidance ?? ''}
+Do not invent personal facts, real-world commitments, or experiences for the user. Fictional outing choices may follow the current virtual-scene instructions. If answering Mira's question requires unknown personal information, express uncertainty naturally while staying with that question; do not invent an answer or abruptly change the subject.
 ${
   format === 'phrases'
-    ? userPhraseInstructions(language)
+    ? userPhraseInstructions(language, delivery)
     : `Return ONLY a JSON object with one key: {"draft":"the suggested user message"}.
 The draft must be plain text, at most 1000 characters, without emotion or gesture metadata.
 Return only the JSON draft object. Start with { and end with }.

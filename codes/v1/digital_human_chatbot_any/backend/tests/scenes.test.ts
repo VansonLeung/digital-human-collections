@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { ScenePlan, ServerEvent, Persona } from '@digital-human/shared';
@@ -10,7 +11,13 @@ import { JsonReplyParser } from '../src/llm/JsonReplyParser.js';
 import { runTurn, type Services } from '../src/pipeline.js';
 import { MediaStore } from '../src/media.js';
 import { readConfig } from '../src/config.js';
-import { buildReplyMessages, buildDraftMessages } from '../src/llm/requestMessages.js';
+import {
+  buildReplyMessages,
+  buildDraftMessages,
+  type ChatMessage,
+} from '../src/llm/requestMessages.js';
+import { needsSceneExtraction, extractSceneMetadata } from '../src/scenes/extractSceneMetadata.js';
+import { outingContext } from '../src/scenes/outingContext.js';
 
 const plan: ScenePlan = {
   title: 'A dessert outing',
@@ -129,7 +136,11 @@ test('major scene changes require a current decision; small steps advance only a
   scene.completeTurn(state.version);
   assert.equal(scene.beginTurn()!.index, 1);
   assert.equal(scene.beginTurn(), undefined);
-  assert.equal(scene.propose({ ...plan, title: 'A different outing' }), false);
+  assert.equal(scene.propose({ ...plan, title: 'A mid-outing suggestion' }), true);
+  const pending = scene.snapshot();
+  assert.equal(pending.active!.stepIndex, 1);
+  scene.decide(pending.proposal!.id, pending.version, false);
+  assert.equal(scene.snapshot().active!.stepIndex, 1);
   state = scene.snapshot();
   scene.completeTurn(state.version);
   scene.completeTurn(state.version);
@@ -561,37 +572,461 @@ test('both speakers get scene ownership and completed steps while scene mode off
     assert.match(request.at(-1)!.content, /Earlier steps are completed/);
     assert.match(request.at(-1)!.content, /Leading: together/);
     assert.match(request.at(-1)!.content, /never phrase strings/);
-    assert.match(request.at(-1)!.content, /not a personal fact/);
+    assert.match(request.at(-1)!.content, /never establish real-user biography/);
   }
   assert.match(
     buildReplyMessages(history, 'en', options).at(-1)!.content,
-    /first object may additionally include sceneProposal/,
+    /sceneProposal or sceneAgreement/,
   );
   assert.match(
     buildDraftMessages(history, 'en', options).at(-1)!.content,
-    /cannot accept a proposed scene/,
+    /cannot click or bypass/,
   );
   assert.ok(!buildReplyMessages(history, 'en').at(-1)!.content.includes('VIRTUAL SCENE MODE'));
 });
 
-test('initial scene requests demonstrate a complete valid localized plan instead of a dialogue-only format example', () => {
+test('scene prompts keep first-turn suggestions optional and require quoted agreement with now/later timing', () => {
   for (const language of ['en', 'zh', 'yue'] as const) {
-    const history = [{ role: 'user' as const, content: 'What could we do together?' }];
-    const request = buildReplyMessages(history, language, {
+    const request = buildReplyMessages([{ role: 'user', content: 'Hello.' }], language, {
       virtualScenesEnabled: true,
+      autoEnterScenes: true,
       scene: { enabled: true, version: 1, dismissedTitles: [] },
     });
     const final = request.at(-1)!.content;
-    assert.match(final, /FIRST object MUST include a valid sceneProposal/);
+    assert.ok(!final.includes('FIRST object MUST include a valid sceneProposal'));
+    assert.match(final, /not because this is the first reply/);
+    assert.match(final, /offerQuote/);
+    assert.match(final, /acceptanceQuote/);
+    assert.match(final, /timing later/);
+    assert.match(final, /unfinished outing after agreement/);
     const example = JSON.parse(final.split('Valid example:\n')[1].split('\n')[0]);
-    const scene = new VirtualScene();
-    scene.configure(true);
-    assert.equal(scene.propose(example[0].sceneProposal), true);
-    assert.ok(example[0].phrase);
-    assert.ok(example[0].emotion);
-    assert.deepEqual(example[0].gestures, []);
-    const disabled = buildReplyMessages(history, language);
-    const simple = JSON.parse(disabled.at(-1)!.content.split('Valid example:\n')[1].split('\n')[0]);
-    assert.equal(simple[0].sceneProposal, undefined);
+    assert.equal(example[0].sceneProposal, undefined);
+  }
+});
+
+test('quoted agreement can start successive new outings before the previous plan finishes, after playback only', async () => {
+  const f = await fixture();
+  try {
+    acceptScene(f.session);
+    for (const title of ['A garden visit', 'A bookstore visit', 'A seaside walk']) {
+      const input = `Let us try ${title} now.`;
+      const phrase = 'Yes, let us go now. I prefer quiet places.';
+      const raw = JSON.stringify([
+        {
+          phrase,
+          emotion: 'happy',
+          gestures: [],
+          sceneProposal: { ...plan, title },
+          sceneAgreement: {
+            offerQuote: input,
+            acceptanceQuote: 'Yes, let us go now.',
+            timing: 'now',
+          },
+          memories: [
+            {
+              owner: 'mira',
+              category: 'preferences',
+              key: 'quiet_places',
+              value: 'Likes quiet places.',
+              quote: 'I prefer quiet places.',
+            },
+          ],
+        },
+      ]);
+      await runTurn(
+        f.config,
+        f.session,
+        { ...command, text: input, speech: true, autoEnterScenes: true },
+        [persona],
+        f.media,
+        {
+          ...f.services,
+          answer: async (_c, _h, _l, delta, _s, options) => {
+            assert.match(options!.memoryContext!, /CONVERSATION MEMORY/);
+            delta(raw);
+            return raw;
+          },
+        },
+      );
+      let state = f.session.scene.snapshot();
+      assert.notEqual(state.active!.plan.title, title);
+      assert.equal(state.proposal!.title, title);
+      assert.equal(state.agreement, undefined);
+      f.session.finish(f.session.active!);
+      state = f.session.scene.snapshot();
+      assert.deepEqual(state.agreement, { proposalId: state.proposal!.id, timing: 'now' });
+      assert.equal(f.session.memory.snapshot()[0].source, 'mira_fiction');
+      assert.equal(
+        f.session.decideScene({
+          proposalId: state.proposal!.id,
+          version: state.version,
+          revision: f.session.revision,
+          accept: true,
+        }),
+        true,
+      );
+      assert.equal(f.session.scene.snapshot().active!.plan.title, title);
+      assert.equal(f.session.scene.snapshot().active!.stepIndex, 0);
+    }
+    assert.equal(f.events.filter((event) => event.type === 'scene.step').length, 4);
+    assert.equal(f.session.scene.snapshot().history!.length, 3);
+    assert.equal(f.session.scene.snapshot().history![0].location, plan.steps[0].location);
+    f.session.reset();
+    assert.equal(f.session.scene.snapshot().history, undefined);
+    assert.ok(f.spoken.every((text) => text === 'Yes, let us go now. I prefer quiet places.'));
+    assert.ok(!JSON.stringify(f.session.history).includes('sceneAgreement'));
+  } finally {
+    await f.close();
+  }
+});
+
+test('future agreements stay marked later; wrong quotes, Stop and failed playback cannot commit agreement or memory', async () => {
+  for (const mode of ['later', 'wrong_quote', 'stop', 'failed'] as const) {
+    const f = await fixture();
+    try {
+      const text = 'Let us visit a garden tomorrow.';
+      const phrase = 'Yes, next time. I prefer tea.';
+      const raw = JSON.stringify([
+        {
+          phrase,
+          emotion: 'thoughtful',
+          gestures: [],
+          sceneProposal: plan,
+          sceneAgreement: {
+            offerQuote: mode === 'wrong_quote' ? 'Invented acceptance.' : text,
+            acceptanceQuote: 'Yes, next time.',
+            timing: 'later',
+          },
+          memories: [
+            {
+              owner: 'mira',
+              category: 'preferences',
+              key: 'drink',
+              value: 'Likes tea.',
+              quote: 'I prefer tea.',
+            },
+          ],
+        },
+      ]);
+      await runTurn(f.config, f.session, { ...command, text, speech: true }, [persona], f.media, {
+        ...f.services,
+        answer: async (_c, _h, _l, delta) => {
+          delta(raw);
+          return raw;
+        },
+      });
+      assert.deepEqual(f.session.memory.snapshot(), []);
+      if (mode === 'stop') f.session.stop();
+      else {
+        if (mode === 'failed') f.session.active!.succeeded = false;
+        f.session.finish(f.session.active!);
+      }
+      assert.equal(
+        f.session.scene.snapshot().agreement?.timing,
+        mode === 'later' ? 'later' : undefined,
+      );
+      assert.equal(
+        f.session.memory.snapshot().length,
+        mode === 'stop' || mode === 'failed' ? 0 : 1,
+      );
+      assert.equal(f.session.scene.snapshot().active, undefined);
+    } finally {
+      await f.close();
+    }
+  }
+});
+
+test('missing outing metadata gets one focused extraction without regenerating or speaking the dialogue twice; ordinary chat adds no call', async () => {
+  const f = await fixture();
+  const text = 'Let us go to a bookstore now.';
+  const phrase = 'Yes, let us go now.';
+  let calls = 0;
+  const adapters: Services = {
+    ...f.services,
+    answer: async (_c, _h, _l, delta) => {
+      const raw = reply(phrase);
+      delta(raw);
+      return raw;
+    },
+    sceneMetadata: async (_c, _state, input, actualReply) => {
+      calls++;
+      assert.equal(input, text);
+      assert.equal(actualReply, phrase);
+      return {
+        proposal: plan,
+        agreement: { offerQuote: text, acceptanceQuote: phrase, timing: 'now' },
+      };
+    },
+  };
+  try {
+    await runTurn(
+      f.config,
+      f.session,
+      { ...command, text, speech: true },
+      [persona],
+      f.media,
+      adapters,
+    );
+    assert.equal(calls, 1);
+    assert.deepEqual(f.spoken, [phrase]);
+    f.session.finish(f.session.active!);
+    assert.equal(f.session.scene.snapshot().agreement?.timing, 'now');
+    await runTurn(
+      f.config,
+      f.session,
+      { ...command, text: 'What is your favorite color?', speech: false },
+      [persona],
+      f.media,
+      {
+        ...adapters,
+        answer: async (_c, _h, _l, delta) => {
+          const raw = reply('I like blue.');
+          delta(raw);
+          return raw;
+        },
+      },
+    );
+    assert.equal(calls, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('explicit spoken assent can supply missing agreement metadata, while withdrawals, unrelated yes and future plans remain safe', async () => {
+  const { clearSpokenAgreement } = await import('../src/scenes/SceneDirector.js');
+  const scene = { enabled: true, version: 1, dismissedTitles: [] };
+  const input = '不如依家一齊去附近間書店睇書，你去唔去？';
+  assert.equal(
+    clearSpokenAgreement(scene, input, '好呀，我正想出去透下氣。你鍾意睇咩書？', true)?.timing,
+    'now',
+  );
+  assert.equal(clearSpokenAgreement(scene, input, '去呀，點會唔去？', true)?.timing, 'now');
+  assert.equal(
+    clearSpokenAgreement(scene, '不如下次一齊去書店。', '好呀，改天去。', true)?.timing,
+    'later',
+  );
+  assert.equal(clearSpokenAgreement(scene, input, '好呀，不過我唔想去喇。', true), undefined);
+  assert.equal(clearSpokenAgreement(scene, '你識唔識廣東話？', '好呀，一齊去。', true), undefined);
+  assert.equal(clearSpokenAgreement(scene, input, '可能啦，等我諗下。', true), undefined);
+  assert.equal(clearSpokenAgreement(scene, input, '好呀。', false), undefined);
+  assert.equal(clearSpokenAgreement(scene, input, '好啦，一齊去啦。', true)?.timing, 'now');
+});
+
+test('the optional scene extractor is gated to outing-like dialogue, not every conversational suggestion', async () => {
+  const { needsSceneExtraction } = await import('../src/scenes/extractSceneMetadata.js');
+  const scene = { enabled: true, version: 1, dismissedTitles: [] };
+  assert.equal(needsSceneExtraction(scene, '不如講下你鍾意咩音樂？', '我鍾意爵士樂。'), false);
+  assert.equal(needsSceneExtraction(scene, '我請你食糖水，好唔好？', '好呀。'), true);
+  assert.equal(needsSceneExtraction(scene, 'We could go to a bookstore.', 'Sure.'), true);
+  assert.equal(needsSceneExtraction({ ...scene, enabled: false }, 'Let us go now.', 'Yes.'), false);
+});
+
+const dinnerTranscript = JSON.parse(
+  await readFile(new URL('./fixtures/cantonese-central-dinner.json', import.meta.url), 'utf8'),
+) as {
+  messages: { role: 'user' | 'assistant'; phrases: string[] }[];
+};
+const dinnerHistory: ChatMessage[] = dinnerTranscript.messages.map(({ role, phrases }) => ({
+  role,
+  content: phrases.join(' '),
+}));
+const dinnerPlan: ScenePlan = {
+  title: '中環意大利菜晚餐',
+  steps: [
+    {
+      location: '中環地鐵站 B 出口',
+      activity: '會合',
+      narration: '兩人喺約定嘅出口會合。',
+      leader: 'user',
+    },
+    {
+      location: '中環嘅意大利餐廳',
+      activity: '揀意粉',
+      narration: '兩人坐低睇餐牌，揀想食嘅意粉。',
+      leader: 'together',
+    },
+    {
+      location: '餐廳飯枱',
+      activity: '食飯傾偈',
+      narration: '意粉送到，兩人一邊食一邊傾偈。',
+      leader: 'together',
+    },
+  ],
+};
+
+test('saved Cantonese dinner dialogue triggers extraction for invitations, departure and meetup follow-ups', () => {
+  const scene = { enabled: true, version: 1, dismissedTitles: [] };
+  assert.equal(dinnerHistory.length, 26);
+  for (const index of [16, 18, 20, 22, 24]) {
+    const input = dinnerHistory[index].content;
+    const actualReply = dinnerHistory[index + 1].content;
+    const history = dinnerHistory.slice(0, index + 1);
+    assert.equal(needsSceneExtraction(scene, input, actualReply, history), true, input);
+    assert.equal(
+      needsSceneExtraction({ ...scene, enabled: false }, input, actualReply, history),
+      false,
+    );
+  }
+  assert.equal(needsSceneExtraction(scene, '我梗係識去啦，低B妹，而家行喔', '快啲啦。'), false);
+  assert.equal(needsSceneExtraction(scene, '我每日搭地鐵返工。', '返工辛苦喇。'), false);
+  const active = {
+    ...scene,
+    active: { plan: { ...dinnerPlan, id: 'existing' }, stepIndex: 0, completedTurns: 0 },
+  };
+  assert.equal(needsSceneExtraction(active, '到咗喇。', 'We have arrived.', dinnerHistory), false);
+  assert.equal(needsSceneExtraction(active, '不如去花園。', '好呀。', dinnerHistory), true);
+  assert.equal(
+    needsSceneExtraction(scene, '我唔鍾意意大利菜。', '我明白。', dinnerHistory.slice(0, 19)),
+    false,
+  );
+  assert.equal(
+    needsSceneExtraction(scene, '不如講下你鍾意咩音樂？', '我鍾意爵士樂。', dinnerHistory),
+    false,
+  );
+});
+
+test('scene fallback receives bounded spoken context, keeps valid proposals when agreement is absent or invalid, and never fabricates acceptance', async () => {
+  const requests: any[] = [];
+  let response: Record<string, unknown> = { sceneProposal: dinnerPlan };
+  const upstream = createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk.toString();
+    requests.push(JSON.parse(body));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] }));
+  });
+  await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const config = readConfig({
+    LLM_MODEL_NAME: 'fake',
+    LLM_STREAM: 'false',
+    LLM_BASE_URL: `http://127.0.0.1:${(upstream.address() as { port: number }).port}/v1`,
+  });
+  const scene = { enabled: true, version: 1, dismissedTitles: [] };
+  const history = dinnerHistory.slice(0, 23);
+  const input = dinnerHistory[22].content;
+  const actualReply = dinnerHistory[23].content;
+  try {
+    for (const sceneAgreement of [
+      undefined,
+      { offerQuote: input, acceptanceQuote: '好', timing: 'now' },
+    ]) {
+      response = { sceneProposal: dinnerPlan, ...(sceneAgreement ? { sceneAgreement } : {}) };
+      const result = await extractSceneMetadata(
+        config,
+        scene,
+        input,
+        actualReply,
+        AbortSignal.timeout(3000),
+        history,
+      );
+      assert.deepEqual(result.proposal, dinnerPlan);
+      assert.equal(result.agreement, undefined, 'asking where to meet is not fresh acceptance');
+    }
+    const messages = requests[0].messages;
+    const context = JSON.parse(messages[1].content.split('\n')[1]);
+    assert.equal(context.length, 8);
+    assert.ok(context.some((entry: any) => entry.text.includes('中環嗰間')));
+    assert.ok(context.some((entry: any) => entry.text.includes('意大利菜')));
+    assert.equal(context.at(-1).speaker, 'Mira');
+    assert.equal(
+      context.some((entry: any) => entry.text === input),
+      false,
+      'latest input is not duplicated',
+    );
+    assert.ok(!JSON.stringify(messages).includes('ABOUT ME'));
+    assert.ok(!JSON.stringify(messages).includes('ABOUT MIRA'));
+    response = { sceneProposal: null, sceneAgreement: null };
+    const refused = await extractSceneMetadata(
+      config,
+      scene,
+      '不如去食飯？',
+      '唔去，我想留喺度。',
+      AbortSignal.timeout(3000),
+      history,
+    );
+    assert.equal(refused.proposal, undefined);
+    assert.equal(refused.agreement, undefined);
+    assert.deepEqual(
+      outingContext([{ role: 'user', content: 'x'.repeat(3000) }], 'new message')[0].text.length,
+      2000,
+    );
+  } finally {
+    upstream.closeAllConnections();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  }
+});
+
+test('the reported dinner departure recovers a scene through the production pipeline without changing or re-speaking dialogue', async () => {
+  const f = await fixture();
+  const index = 20;
+  const input = dinnerHistory[index].content;
+  const actualReply = dinnerHistory[index + 1].content;
+  f.session.history = dinnerHistory.slice(0, index);
+  let extractionCalls = 0;
+  try {
+    await runTurn(
+      f.config,
+      f.session,
+      { ...command, text: input, language: 'yue', speech: true, autoEnterScenes: true },
+      [persona],
+      f.media,
+      {
+        ...f.services,
+        answer: async (_c, _history, _language, delta) => {
+          const raw = JSON.stringify(
+            dinnerTranscript.messages[index + 1].phrases.map((phrase) => ({
+              phrase,
+              emotion: 'neutral',
+              gestures: [],
+            })),
+          );
+          delta(raw);
+          return raw;
+        },
+        sceneMetadata: async (_config, _scene, text, replyText, _signal, context) => {
+          extractionCalls++;
+          assert.equal(text, input);
+          assert.equal(replyText, actualReply);
+          assert.ok(context?.some((message) => message.content.includes('意大利菜')));
+          assert.ok(!JSON.stringify(context).includes('RESPONSE REQUIREMENTS'));
+          return {
+            proposal: dinnerPlan,
+            agreement: {
+              offerQuote: '而家行喔',
+              acceptanceQuote: '咁就快啲啦，唔好俾人等。',
+              timing: 'now',
+            },
+          };
+        },
+      },
+    );
+    assert.equal(extractionCalls, 1);
+    assert.deepEqual(f.spoken, dinnerTranscript.messages[index + 1].phrases);
+    let state = f.session.scene.snapshot();
+    assert.deepEqual(state.proposal?.steps, dinnerPlan.steps);
+    assert.equal(state.agreement, undefined);
+    assert.equal(state.active, undefined);
+    f.session.finish(f.session.active!);
+    state = f.session.scene.snapshot();
+    assert.equal(state.agreement?.timing, 'now');
+    assert.ok(
+      f.events.some(
+        (event) => event.type === 'scene.state' && event.scene.proposal?.title === dinnerPlan.title,
+      ),
+    );
+    assert.equal(
+      f.session.decideScene({
+        proposalId: state.proposal!.id,
+        version: state.version,
+        revision: f.session.revision,
+        accept: true,
+      }),
+      true,
+    );
+    assert.equal(f.session.scene.snapshot().active?.stepIndex, 0);
+    assert.deepEqual(f.session.memory.snapshot(), []);
+    assert.ok(!JSON.stringify(f.session.history).includes(dinnerPlan.steps[0].narration));
+  } finally {
+    await f.close();
   }
 });

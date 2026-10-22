@@ -1,7 +1,12 @@
 import { jsonrepair } from 'jsonrepair';
+import { progressSchema, type ProgressUpdate } from '../conversation/ConversationProgress.js';
 import {
   llmPhraseSchema,
   scenePlanSchema,
+  sceneAgreementSchema,
+  memoryCandidateSchema,
+  type MemoryCandidate,
+  type SceneAgreement,
   type ScenePlan,
   replyLimits,
   replyPhraseTextSchema,
@@ -19,7 +24,16 @@ export class ReplyFormatError extends Error {
 }
 
 /** Only a fully closed object is eligible for repair. Never complete streamed text. */
-function parsePhrase(source: string, onSceneProposal?: (plan: ScenePlan) => void): SpeechPhrase {
+export type ReplyMetadata = {
+  memories: MemoryCandidate[];
+  sceneAgreement?: SceneAgreement;
+  conversationProgress?: ProgressUpdate;
+};
+function parsePhrase(
+  source: string,
+  onSceneProposal?: (plan: ScenePlan) => void,
+  onMetadata?: (metadata: ReplyMetadata) => void,
+): SpeechPhrase {
   let value: unknown;
   let repairError: string | undefined;
   let repairedOutput: string | undefined;
@@ -44,17 +58,32 @@ function parsePhrase(source: string, onSceneProposal?: (plan: ScenePlan) => void
     }
   }
 
-  if (onSceneProposal && value && typeof value === 'object' && !Array.isArray(value)) {
-    const { sceneProposal, ...dialogue } = value as Record<string, unknown>;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const { sceneProposal, sceneAgreement, memories, conversationProgress, ...dialogue } =
+      value as Record<string, unknown>;
     value = dialogue;
-    const proposal = scenePlanSchema.safeParse(sceneProposal);
-    if (proposal.success && llmPhraseSchema.safeParse(dialogue).success)
-      onSceneProposal(proposal.data);
+    if (llmPhraseSchema.safeParse(dialogue).success) {
+      const proposal = scenePlanSchema.safeParse(sceneProposal);
+      if (proposal.success) onSceneProposal?.(proposal.data);
+      const agreement = sceneAgreementSchema.safeParse(sceneAgreement);
+      const progress = progressSchema.safeParse(conversationProgress);
+      const facts = Array.isArray(memories)
+        ? memories.slice(0, 2).flatMap((item) => {
+            const parsed = memoryCandidateSchema.safeParse(item);
+            return parsed.success ? [parsed.data] : [];
+          })
+        : [];
+      onMetadata?.({
+        memories: facts,
+        ...(agreement.success ? { sceneAgreement: agreement.data } : {}),
+        ...(progress.success ? { conversationProgress: progress.data } : {}),
+      });
+    }
   }
   const parsed = llmPhraseSchema.safeParse(value);
   if (parsed.success) {
-    const { phrase, emotion, gestures } = parsed.data;
-    return { text: phrase, performance: { emotion, gestures } };
+    const { phrase, emotion, gestures, reaction } = parsed.data;
+    return { text: phrase, performance: { emotion, gestures, ...(reaction ? { reaction } : {}) } };
   }
 
   // Metadata is all-or-nothing: invalid or missing controls cannot animate a rig.
@@ -103,6 +132,7 @@ export class JsonReplyParser {
     private onText: (text: string) => void,
     private onPhrase: (phrase: SpeechPhrase) => void,
     private onSceneProposal?: (plan: ScenePlan) => void,
+    private onMetadata?: (metadata: ReplyMetadata) => void,
   ) {}
 
   write(delta: string) {
@@ -176,6 +206,11 @@ export class JsonReplyParser {
       this.onSceneProposal
         ? (proposal) => {
             if (!this.phrases) this.onSceneProposal!(proposal);
+          }
+        : undefined,
+      this.onMetadata
+        ? (metadata) => {
+            if (!this.phrases) this.onMetadata!(metadata);
           }
         : undefined,
     );

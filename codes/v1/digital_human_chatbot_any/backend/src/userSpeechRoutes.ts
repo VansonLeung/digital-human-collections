@@ -1,3 +1,4 @@
+import { prepareScene, generateSceneContinuation } from './scenes/prepareScene.js';
 import type { Express, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import {
@@ -84,7 +85,18 @@ export function registerUserSpeechRoutes(
           return res
             .status(409)
             .json({ error: 'Wait for Mira to reply before generating an automatic message.' });
-        if (input.kind === 'automatic') session.configureScenes(input.virtualScenesEnabled);
+        if (input.kind === 'automatic') {
+          session.configureScenes(input.virtualScenesEnabled);
+          await prepareScene(
+            config,
+            session,
+            controller.signal,
+            generateSceneContinuation,
+            current,
+          );
+          if (!current())
+            return res.status(409).json({ error: 'Spoken-message preparation was cancelled.' });
+        }
         const text = input.kind === 'rewrite' ? input.text : '';
         const language = resolveLanguage(text, input.language, session.language);
         const phrases = await generateUserPhrases(
@@ -96,7 +108,13 @@ export function registerUserSpeechRoutes(
           controller.signal,
           input.kind === 'automatic' && input.localizedProfanity,
           input.kind === 'automatic'
-            ? { ...input, scene: input.virtualScenesEnabled ? session.scene.snapshot() : undefined }
+            ? {
+                ...input,
+                memoryContext: session.conversationContext(session.history.at(-1)?.content ?? ''),
+                progressGuidance: session.progress.guidance(),
+                delivery: input.naturalVariation ? session.director.next('user') : undefined,
+                scene: input.virtualScenesEnabled ? session.scene.snapshot() : undefined,
+              }
             : {},
         );
         if (!current())

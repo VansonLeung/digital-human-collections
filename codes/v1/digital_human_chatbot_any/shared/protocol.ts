@@ -1,14 +1,18 @@
 import { z } from 'zod';
 import { conversationPreferencesSchema } from './conversation.js';
+import { conversationMemorySchema } from './memory.js';
 import { sceneSnapshotSchema, sceneStepSchema } from './scenes.js';
+import { conversationSummarySchema } from './history.js';
 import { phrasePerformanceSchema } from './performance.js';
 
 export * from './performance.js';
 export * from './llmReply.js';
 export * from './clientSettings.js';
 export * from './conversation.js';
+export * from './memory.js';
 export * from './scenes.js';
 export * from './userSpeech.js';
+export * from './history.js';
 
 export const languageSchema = z.enum(['en', 'zh', 'yue']);
 
@@ -49,6 +53,7 @@ export const commandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('turn.send'),
     automatic: z.boolean().optional(),
+    userPhrases: z.array(z.string().trim().min(1).max(600)).min(1).max(8).optional(),
     displayMode: displayModeSchema.default('full'),
     text: z.string().trim().min(1).max(4000),
     personaId: z.string().min(1).max(80),
@@ -59,6 +64,17 @@ export const commandSchema = z.discriminatedUnion('type', [
     expectedRevision: z.number().int().nonnegative().optional(),
   }),
   z.object({ type: z.literal('scene.configure'), enabled: z.boolean() }),
+  z.object({
+    type: z.literal('memory.edit'),
+    id: z.string(),
+    value: z.string().trim().min(1).max(240),
+    revision: z.number().int().nonnegative(),
+  }),
+  z.object({
+    type: z.literal('memory.forget'),
+    id: z.string(),
+    revision: z.number().int().nonnegative(),
+  }),
   z.object({
     type: z.literal('scene.decide'),
     proposalId: z.string(),
@@ -120,6 +136,9 @@ export type ComponentHealth = {
 };
 
 export type Health = {
+  performanceProtocolVersion?: number;
+  conversationHistoryVersion?: number;
+  backendStartedAt?: string;
   llm: ComponentHealth;
   asr: ComponentHealth;
   tts: ComponentHealth;
@@ -137,6 +156,17 @@ const base = {
 
 export const eventSchema = z.discriminatedUnion('type', [
   z.object({ ...base, type: z.literal('session.ready') }),
+  z.object({
+    ...base,
+    type: z.literal('conversation.saved'),
+    conversation: conversationSummarySchema,
+  }),
+  z.object({ ...base, type: z.literal('conversation.save_failed'), message: z.string() }),
+  z.object({
+    ...base,
+    type: z.literal('memory.state'),
+    memories: z.array(conversationMemorySchema).max(48),
+  }),
   z.object({ ...base, type: z.literal('scene.state'), scene: sceneSnapshotSchema }),
   z.object({
     ...base,
@@ -157,6 +187,22 @@ export const eventSchema = z.discriminatedUnion('type', [
   z.object({ ...base, type: z.literal('state.changed'), state: z.string() }),
   z.object({ ...base, type: z.literal('answer.delta'), text: z.string() }),
   z.object({ ...base, type: z.literal('answer.final'), text: z.string() }),
+  z.object({
+    ...base,
+    type: z.literal('performance.phrase'),
+    phraseIndex: z.number().int().nonnegative(),
+    text: z.string(),
+    selected: phrasePerformanceSchema,
+    applied: phrasePerformanceSchema,
+    decision: z.enum([
+      'allowed',
+      'reaction_mapped',
+      'cooldown',
+      'hop_disabled',
+      'already_selected',
+    ]),
+    speech: z.boolean(),
+  }),
   z.object({
     ...base,
     type: z.literal('answer.phrase'),

@@ -1,3 +1,12 @@
+import { savedConversationSchema } from '@digital-human/shared';
+import { useConversationHistory } from './hooks/useConversationHistory';
+import { ConversationHistory } from './components/ConversationHistory';
+import { supportsPerformanceProtocol } from '@digital-human/shared';
+import {
+  PerformanceInspector,
+  type PerformanceRow,
+  type ActionRow,
+} from './components/PerformanceInspector';
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowUp,
@@ -38,6 +47,8 @@ import { usePhraseDisplay } from './hooks/usePhraseDisplay';
 import { useUserMessageSpeech } from './hooks/useUserMessageSpeech';
 import { ConversationFocusControls } from './components/ConversationFocusControls';
 import { UserMessageSpeechControls } from './components/UserMessageSpeechControls';
+import { useConversationMemory } from './hooks/useConversationMemory';
+import { ConversationMemoryControls } from './components/ConversationMemoryControls';
 import { useVirtualScenes } from './hooks/useVirtualScenes';
 import { SceneEventCard, SceneStatus, SceneProposalCard } from './components/SceneCards';
 import { TypingIndicator } from './components/TypingIndicator';
@@ -64,6 +75,9 @@ const languages: Record<ReplyLanguage, string> = {
 };
 
 export function App() {
+  const [performanceRows, setPerformanceRows] = useState<PerformanceRow[]>([]);
+  const [actionRows, setActionRows] = useState<ActionRow[]>([]);
+  const actionSequence = useRef(0);
   const [personas, setPersonas] = useState<Persona[]>([]);
   const preferences = useSettings();
   const {
@@ -74,7 +88,10 @@ export function App() {
     virtualScenesEnabled,
     autoEnterScenes,
     autoRecoverStalls,
+    naturalVariation,
     aboutMe,
+    miraBehavior,
+    miraAngryHopEnabled,
     speech,
     muted,
     proactiveEnabled,
@@ -134,6 +151,11 @@ export function App() {
   const socket = useRef<WebSocket | undefined>(undefined);
   const receiveEvent = useRef<(event: ServerEvent) => void>(() => {});
   const session = useRef('');
+  const connectionAttempt = useRef(0);
+  const conversationHistory = useConversationHistory({
+    open: (id) => start(id),
+    sessionId: session.current,
+  });
   const currentTurn = useRef<string | null>(null);
   const acceptTurn = useRef(false);
   const pendingSpokenSubmission = useRef<
@@ -168,7 +190,10 @@ export function App() {
     virtualScenesEnabled,
     autoEnterScenes,
     autoRecoverStalls,
+    naturalVariation,
     aboutMe,
+    miraBehavior,
+    miraAngryHopEnabled,
     revision,
     blocked: !connected || busy || recording || transcribing,
     onDraft: setDraft,
@@ -187,7 +212,10 @@ export function App() {
       virtualScenesEnabled,
       autoEnterScenes,
       autoRecoverStalls,
+      naturalVariation,
       aboutMe,
+      miraBehavior,
+      miraAngryHopEnabled,
     },
     draft,
     personaId,
@@ -211,12 +239,13 @@ export function App() {
           item.turnId === group && item.pending ? { ...item, pending: false, notSent: true } : item,
         ),
       ),
-    onCommit: (text, context, group, automatic) => {
+    onCommit: (text, context, group, automatic, phrases) => {
       if (context.sessionId !== session.current || context.revision !== revision) return false;
       return send(text, automatic, {
         group,
         revision: context.revision,
         language: context.language,
+        phrases,
       });
     },
     onError: (message, details) => {
@@ -237,6 +266,16 @@ export function App() {
       ];
     });
     setCaption(phrase.text);
+  });
+  const conversationMemory = useConversationMemory({
+    revision,
+    send: command,
+    onInteraction: () => {
+      autoReply.pause();
+      suggestion.cancel();
+      userSpeech.cancel(true);
+      proactive.touch();
+    },
   });
   const virtualScenes = useVirtualScenes({
     enabled: virtualScenesEnabled,
@@ -401,6 +440,12 @@ export function App() {
         if (disposed) return;
         instance = new Renderer(canvas.current!);
         renderer.current = instance;
+        instance.setPerformanceObserver?.((event) => {
+          if (!disposed)
+            setActionRows((rows) =>
+              [...rows, { ...event, id: ++actionSequence.current }].slice(-32),
+            );
+        });
         await instance.load(modelUrl);
         if (!disposed) setAvatarReady(true);
       } catch (error) {
@@ -443,7 +488,41 @@ export function App() {
       setState('Preparing voice');
     }
     player.current!.begin({
+      playbackState: (state) => {
+        renderer.current?.setPlaybackState?.(state);
+        if (state === 'stopped' || state === 'ended')
+          setPerformanceRows((rows) =>
+            rows.map((row) =>
+              row.turnId === turnId &&
+              (row.playback.startsWith('playing') || row.playback === 'waiting for audio')
+                ? {
+                    ...row,
+                    playback: state === 'ended' ? 'finished' : 'cancelled: playback stopped',
+                  }
+                : row,
+            ),
+          );
+      },
       phraseStarted: (phrase) => {
+        setPerformanceRows((rows) =>
+          rows.map((row) =>
+            row.turnId === turnId
+              ? {
+                  ...row,
+                  playback:
+                    row.phraseIndex === phrase.phraseIndex
+                      ? phrase.performance.gestures.some(
+                          (gesture) => !renderer.current?.supportedGestures.includes(gesture.name),
+                        )
+                        ? 'playing: some gestures unsupported'
+                        : 'playing'
+                      : row.playback.startsWith('playing')
+                        ? 'finished'
+                        : row.playback,
+                }
+              : row,
+          ),
+        );
         renderer.current?.beginPhrase(phrase.performance, phrase.duration);
         setCaption(phrase.text);
         setState('Speaking');
@@ -484,7 +563,13 @@ export function App() {
     if (event.seq <= seq.current) return;
     seq.current = event.seq;
     setRevision(event.revision);
+    if (conversationHistory.receive(event)) return;
+    if (conversationMemory.receive(event)) return;
     if (virtualScenes.receive(event)) return;
+    if (event.type === 'session.reset') {
+      setPerformanceRows([]);
+      setActionRows([]);
+    }
     if (event.type === 'session.ready') {
       setConnected(true);
       setState('Ready');
@@ -573,6 +658,16 @@ export function App() {
         setMessages((m) => m.map((v) => (v.id === event.turnId ? { ...v, text: event.text } : v)));
         if (queueTurn.current !== event.turnId) setCaption(event.text);
         break;
+      case 'performance.phrase':
+        setPerformanceRows((rows) =>
+          [
+            ...rows.filter(
+              (row) => row.turnId !== event.turnId || row.phraseIndex !== event.phraseIndex,
+            ),
+            { ...event, playback: event.speech ? 'waiting for audio' : 'text only' },
+          ].slice(-24),
+        );
+        break;
       case 'answer.phrase':
         if (turnDisplay.current?.mode === 'phrases' && !turnDisplay.current.speech)
           phraseDisplay.phrase({
@@ -639,15 +734,64 @@ export function App() {
   // Keep event handling current when preferences change within a live session.
   receiveEvent.current = receive;
 
-  async function start() {
+  async function start(conversationId?: string): Promise<boolean> {
+    const attempt = ++connectionAttempt.current;
+    stop();
+    if (recorder.current) {
+      recorder.current.onstop = null;
+      if (recorder.current.state !== 'inactive') recorder.current.stop();
+    }
+    mic.current?.getTracks().forEach((track) => track.stop());
+    clearInterval(recordingTimer.current);
+    setRecording(false);
+    setConnected(false);
     setError('');
     setDiagnostic(undefined);
     setState('Connecting');
+    setPerformanceRows([]);
+    setActionRows([]);
     try {
-      await Promise.all([player.current!.unlock(), userSpeech.unlock()]);
-      const response = await fetch('/api/sessions', { method: 'POST' });
-      if (!response.ok) throw new Error('Unable to create a session.');
+      if (!conversationId) await Promise.all([player.current!.unlock(), userSpeech.unlock()]);
+      const response = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(conversationId ? { conversationId } : {}),
+      });
       const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to create a session.');
+      if (connectionAttempt.current !== attempt) return false;
+      const saved = data.conversation
+        ? savedConversationSchema.parse(data.conversation)
+        : undefined;
+      conversationHistory.loaded(saved);
+      setMessages(saved?.messages ?? []);
+      setRevision(0);
+      setDraft('');
+      setCaption('');
+      setReview(false);
+      setRetry(false);
+      setCompletedRevision(null);
+      setLastSpeech(undefined);
+      currentTurn.current = null;
+      queueTurn.current = null;
+      speechPhrases.current = [];
+      if (saved) {
+        for (const key of [
+          'personaId',
+          'language',
+          'displayMode',
+          'aboutMe',
+          'miraBehavior',
+          'miraAngryHopEnabled',
+          'getToKnowEachOther',
+          'virtualScenesEnabled',
+          'autoEnterScenes',
+          'autoRecoverStalls',
+          'naturalVariation',
+        ] as const)
+          if (saved.settingsCaptured) preferences.update(key, saved.settings[key]);
+        preferences.update('virtualScenesEnabled', saved.state.scene.enabled);
+      }
       session.current = data.id;
       seq.current = 0;
       socket.current?.close();
@@ -657,7 +801,7 @@ export function App() {
       socket.current = ws;
       ws.onmessage = (message) => {
         const parsed = eventSchema.safeParse(JSON.parse(message.data));
-        if (parsed.success) receiveEvent.current(parsed.data);
+        if (socket.current === ws && parsed.success) receiveEvent.current(parsed.data);
       };
       ws.onclose = () => {
         if (socket.current !== ws) return;
@@ -673,16 +817,18 @@ export function App() {
         setState('Disconnected');
       };
       ws.onerror = () => setError('Connection failed. Check that the backend is running.');
+      return true;
     } catch (e) {
       setState('Ready when you are');
       setError((e as Error).message);
+      return false;
     }
   }
 
   function send(
     text = draft,
     automated = false,
-    spoken?: { group: string; revision: number; language: ReplyLanguage },
+    spoken?: { group: string; revision: number; language: ReplyLanguage; phrases: string[] },
   ) {
     if (!connected || busy || phraseDisplay.revealing || recording || transcribing || !text.trim())
       return false;
@@ -726,8 +872,11 @@ export function App() {
       virtualScenesEnabled,
       autoEnterScenes,
       autoRecoverStalls,
+      naturalVariation,
       aboutMe,
-      ...(spoken ? { expectedRevision: spoken.revision } : {}),
+      miraBehavior,
+      miraAngryHopEnabled,
+      ...(spoken ? { expectedRevision: spoken.revision, userPhrases: spoken.phrases } : {}),
     });
     return true;
   }
@@ -752,7 +901,10 @@ export function App() {
       virtualScenesEnabled,
       autoEnterScenes,
       autoRecoverStalls,
+      naturalVariation,
       aboutMe,
+      miraBehavior,
+      miraAngryHopEnabled,
     });
   }
 
@@ -794,6 +946,7 @@ export function App() {
   }
 
   function reset() {
+    conversationHistory.clear();
     stop();
     userSpeech.cancel(true);
     command({ type: 'session.reset' });
@@ -916,17 +1069,26 @@ export function App() {
   }
 
   function updateConversationPreference(
-    key: 'getToKnowEachOther' | 'virtualScenesEnabled' | 'autoEnterScenes' | 'autoRecoverStalls',
+    key:
+      | 'getToKnowEachOther'
+      | 'virtualScenesEnabled'
+      | 'autoEnterScenes'
+      | 'autoRecoverStalls'
+      | 'naturalVariation'
+      | 'miraAngryHopEnabled',
     value: boolean,
   ): void;
-  function updateConversationPreference(key: 'aboutMe', value: string): void;
+  function updateConversationPreference(key: 'aboutMe' | 'miraBehavior', value: string): void;
   function updateConversationPreference(
     key:
       | 'getToKnowEachOther'
       | 'virtualScenesEnabled'
       | 'autoEnterScenes'
       | 'autoRecoverStalls'
-      | 'aboutMe',
+      | 'naturalVariation'
+      | 'aboutMe'
+      | 'miraBehavior'
+      | 'miraAngryHopEnabled',
     value: boolean | string,
   ) {
     autoReply.pause();
@@ -936,11 +1098,14 @@ export function App() {
       (key === 'getToKnowEachOther' ||
         key === 'virtualScenesEnabled' ||
         key === 'autoEnterScenes' ||
-        key === 'autoRecoverStalls') &&
+        key === 'autoRecoverStalls' ||
+        key === 'naturalVariation' ||
+        key === 'miraAngryHopEnabled') &&
       typeof value === 'boolean'
     )
       preferences.update(key, value);
-    if (key === 'aboutMe' && typeof value === 'string') preferences.update(key, value);
+    if ((key === 'aboutMe' || key === 'miraBehavior') && typeof value === 'string')
+      preferences.update(key, value);
   }
 
   const disabled =
@@ -1116,6 +1281,27 @@ export function App() {
               <RotateCcw size={18} />
             </button>
           </div>
+          <ConversationHistory
+            items={conversationHistory.items}
+            current={conversationHistory.current}
+            error={conversationHistory.error}
+            loading={conversationHistory.loading}
+            saving={conversationHistory.saving}
+            connected={connected}
+            disabled={disabled}
+            canSave={messages.some((message) => message.role === 'assistant' && !!message.text)}
+            available={health?.conversationHistoryVersion === 1}
+            sessionId={session.current}
+            onOpen={(id) => {
+              void conversationHistory.open(id);
+            }}
+            onSave={() => {
+              void conversationHistory.save();
+            }}
+            onRefresh={() => {
+              void conversationHistory.refresh();
+            }}
+          />
           {virtualScenesEnabled && <SceneStatus scene={virtualScenes.scene} />}
           <div className="messages" role="log" aria-live="polite">
             {!messages.length && (
@@ -1442,21 +1628,45 @@ export function App() {
               <button
                 type="button"
                 disabled={disabled || !!draft.trim() || !!error || completedRevision === null}
-                onClick={autoReply.resume}
+                onClick={() => {
+                  if (
+                    completedRevision === null &&
+                    conversationHistory.current &&
+                    messages.some((message) => message.role === 'assistant')
+                  )
+                    setCompletedRevision(revision);
+                  autoReply.resume();
+                }}
               >
                 Resume auto replies
               </button>
             )}
           </div>
           <div className="conversation-preferences">
+            <PerformanceInspector
+              phrases={performanceRows}
+              actions={actionRows}
+              backendCompatible={supportsPerformanceProtocol(health)}
+            />
             <details className="conversation-settings">
               <summary>Conversation settings</summary>
               <div className="settings-fields">
+                <ConversationMemoryControls
+                  memories={conversationMemory.memories}
+                  sceneHistory={virtualScenes.scene?.history}
+                  disabled={disabled || !connected}
+                  onEdit={conversationMemory.edit}
+                  onForget={conversationMemory.forget}
+                />
                 <ConversationFocusControls
                   getToKnowEachOther={getToKnowEachOther}
                   virtualScenesEnabled={virtualScenesEnabled}
                   autoEnterScenes={autoEnterScenes}
                   autoRecoverStalls={autoRecoverStalls}
+                  naturalVariation={naturalVariation}
+                  onVariationChange={(value) =>
+                    updateConversationPreference('naturalVariation', value)
+                  }
                   onAutoEnterChange={(value) =>
                     updateConversationPreference('autoEnterScenes', value)
                   }
@@ -1467,6 +1677,14 @@ export function App() {
                     updateConversationPreference('virtualScenesEnabled', value)
                   }
                   aboutMe={aboutMe}
+                  miraBehavior={miraBehavior}
+                  miraAngryHopEnabled={miraAngryHopEnabled}
+                  onMiraBehaviorChange={(value) =>
+                    updateConversationPreference('miraBehavior', value)
+                  }
+                  onMiraHopChange={(value) =>
+                    updateConversationPreference('miraAngryHopEnabled', value)
+                  }
                   disabled={disabled}
                   onFocusChange={(value) =>
                     updateConversationPreference('getToKnowEachOther', value)

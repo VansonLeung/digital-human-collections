@@ -11,6 +11,17 @@ type Chain = {
   orientation: THREE.Quaternion;
 };
 
+/** Finger direction alone leaves wrist roll ambiguous at a 180-degree crossing.
+ * Normalized hands have palms along -Y and thumbs along +Z in the T-pose. */
+export function crossedHandOrientation(chest: THREE.Quaternion) {
+  const across = new THREE.Vector3(-1, 0, 0).applyQuaternion(chest);
+  const outward = new THREE.Vector3(0, 0, 1).applyQuaternion(chest);
+  const thumbUp = new THREE.Vector3().crossVectors(across, outward).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(
+    new THREE.Matrix4().makeBasis(across, outward, thumbUp),
+  );
+}
+
 /** Converts semantic waist/chin/chest contacts to each avatar's proportions.
  * Feet stay at their standing anchors when a pose lowers the pelvis. */
 export class VrmPoseConstraints {
@@ -128,9 +139,12 @@ export class VrmPoseConstraints {
       const fingerDirection = new THREE.Vector3(side === 'left' ? 1 : -1, 0, 0).applyQuaternion(
         chain.orientation,
       );
-      const wrist = new THREE.Quaternion()
-        .setFromUnitVectors(fingerDirection.normalize(), direction.normalize())
-        .multiply(chain.orientation);
+      const wrist =
+        pose.contacts.hands[`${side}Hand`] === 'crossed'
+          ? crossedHandOrientation(chestOrientation)
+          : new THREE.Quaternion()
+              .setFromUnitVectors(fingerDirection.normalize(), direction.normalize())
+              .multiply(chain.orientation);
       setWorldQuaternion(chain.end, wrist, weight);
     }
     if (pose.contacts.feet && (pose.hipsDrop ?? 0) > 1e-7) {

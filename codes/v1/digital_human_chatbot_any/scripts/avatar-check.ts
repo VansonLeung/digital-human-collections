@@ -233,6 +233,17 @@ try {
           camera: renderer.camera.position.toArray(),
           cameraRest,
           headTurn: headRest.angleTo(head.getWorldQuaternion(head.quaternion.clone())),
+          palms: ['left', 'right'].map((side) => {
+            const chest = bone('chest') ?? bone('spine');
+            const rotation = chest.getWorldQuaternion(chest.quaternion.clone());
+            const hand = bone(`${side}Hand`);
+            const wrist = hand.getWorldQuaternion(hand.quaternion.clone());
+            const palm = hand.position.clone().set(0, -1, 0).applyQuaternion(wrist);
+            const thumb = hand.position.clone().set(0, 0, 1).applyQuaternion(wrist);
+            const inward = hand.position.clone().set(0, 0, -1).applyQuaternion(rotation);
+            const up = hand.position.clone().set(0, 1, 0).applyQuaternion(rotation);
+            return { inward: palm.dot(inward), thumbUp: thumb.dot(up) };
+          }),
           gaze: lookAt
             ? {
                 yaw: lookAt.yaw,
@@ -262,6 +273,11 @@ try {
       assert.deepEqual(pose.currentRoot, pose.root, `${id} ${name} must not move the scene root`);
       assert.ok(pose.mouthClosed < 0.001, `${id} ${name} must not open the mouth`);
       assert.ok(pose.mouthOpen > 0.4, `${id} ${name} must preserve mouth animation`);
+      if (name === 'crossed_arms' || name === 'tsundere_turn')
+        assert.ok(
+          pose.palms.every((palm) => palm.inward > 0.99 && palm.thumbUp > 0.99),
+          `${id} ${name} palms face the chest, thumbs up: ${JSON.stringify(pose.palms)}`,
+        );
       assert.ok(
         pose.left.some(
           (value: number, i: number) => Math.abs(value - result.rest.left[i]) > 0.05,
@@ -337,6 +353,91 @@ try {
       });
       assert.ok(released, `${id} ${name} restores previous gaze`);
     }
+    const hop = await page.evaluate(async () => {
+      const renderer = (window as any).checkedAvatar;
+      const bone = (name: string) => renderer.vrm.humanoid.getNormalizedBoneNode(name);
+      const foot = bone('leftFoot');
+      const position = () => foot.getWorldPosition(foot.position.clone()).y;
+      renderer.stopPose();
+      renderer.setSpeaking(false);
+      renderer.setMouthOpening(0);
+      // Let camera easing from the previous full-body preset settle first.
+      await new Promise((resolve) => setTimeout(resolve, 1600));
+      const ground = position();
+      const root = renderer.vrm.scene.position.toArray();
+      const camera = renderer.camera.position.clone();
+      const fingerNames = (['left', 'right'] as const).flatMap((side) =>
+        ['Index', 'Middle', 'Ring', 'Little'].map((finger) => ({
+          side,
+          name: `${side}${finger}Distal`,
+        })),
+      );
+      const reach = ({ side, name }: { side: string; name: string }) => {
+        const hand = renderer.vrm.humanoid.getRawBoneNode(`${side}Hand`);
+        const finger = renderer.vrm.humanoid.getRawBoneNode(name);
+        return hand.worldToLocal(finger.getWorldPosition(hand.position.clone())).length();
+      };
+      const openReach = fingerNames.map(reach);
+      const fingerRest = Object.fromEntries(
+        Object.keys(renderer.vrm.humanoid.normalizedHumanBones)
+          .filter((name) => /Thumb|Index|Middle|Ring|Little/.test(name))
+          .map((name) => [name, bone(name).quaternion.clone()]),
+      );
+      renderer.previewPose('angry_hop', 1, 3);
+      const samples: number[] = [];
+      let angry = 0;
+      let mouth = 0;
+      let cameraShift = 0;
+      let closedReach: number[] = [];
+      let thumbCurl: number[] = [];
+      for (let index = 0; index < 80; index++) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        samples.push(position() - ground);
+        angry = Math.max(angry, renderer.vrm.expressionManager.getValue('talk-angry'));
+        mouth = Math.max(mouth, renderer.vrm.expressionManager.getValue('aa'));
+        cameraShift = Math.max(cameraShift, renderer.camera.position.distanceTo(camera));
+        if (index === 20) {
+          closedReach = fingerNames.map(reach);
+          thumbCurl = ['leftThumbMetacarpal', 'rightThumbMetacarpal'].map((name) =>
+            bone(name).quaternion.angleTo(fingerRest[name]),
+          );
+        }
+      }
+      renderer.stopPose();
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      return {
+        maxLift: Math.max(...samples),
+        groundError: position() - ground,
+        angry,
+        mouth,
+        root,
+        rootAfter: renderer.vrm.scene.position.toArray(),
+        cameraShift,
+        fingerReachRatios: closedReach.map((reach, index) => reach / openReach[index]),
+        thumbCurl,
+        fingerRestError: Math.max(
+          ...Object.entries(fingerRest).map(([name, rest]) => bone(name).quaternion.angleTo(rest)),
+        ),
+      };
+    });
+    assert.ok(
+      hop.maxLift > 0.02 && hop.maxLift < 0.12,
+      `${id} visible bounded hop: ${JSON.stringify(hop)}`,
+    );
+    assert.ok(Math.abs(hop.groundError) < 0.005, `${id} returns to standing height`);
+    assert.ok(hop.angry > 0.5);
+    assert.ok(hop.mouth < 0.001);
+    assert.deepEqual(hop.rootAfter, hop.root);
+    assert.ok(hop.cameraShift < 0.001, `${id} angry hop keeps normal framing`);
+    assert.ok(
+      hop.fingerReachRatios.every((ratio) => ratio < 0.85),
+      `${id} all fingers curl toward the palm: ${JSON.stringify(hop.fingerReachRatios)}`,
+    );
+    assert.ok(
+      hop.thumbCurl.every((angle) => angle > 0.5),
+      `${id} both thumbs fold in`,
+    );
+    assert.ok(hop.fingerRestError < 0.001, `${id} hands relax after Stop`);
     await page.evaluate(() => (window as any).checkedAvatar.setSpeaking(true));
     for (const emotion of [
       'happy',
@@ -495,7 +596,8 @@ try {
           'binary facial texture selection',
           'mouth closes under every active emotion',
           'eyes/brows remain expressive during silence',
-          'seven pose presets without speech',
+          'seven static pose presets and three bounded angry hops without speech',
+          'closed fists with folded thumbs, normal hop framing and relaxed hands after Stop',
           'three-quarter tsundere turn and restored camera gaze',
           'poses preserve independent mouth animation',
           'dramatic pose camera framing and planted feet',

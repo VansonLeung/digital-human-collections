@@ -274,10 +274,10 @@ test('Express forwards multipart audio with align=false and validates transcript
     assert.equal(context.sessions.get(id)?.language, 'yue');
     assert.match(body, /name="language"\r\n\r\nauto/);
     const health = await fetch(`${url}/api/health`);
-    assert.equal(
-      ((await health.json()) as { lipsync: { status: string } }).lipsync.status,
-      'ready',
-    );
+    const readiness = await health.json();
+    assert.equal(readiness.lipsync.status, 'ready');
+    assert.equal(readiness.performanceProtocolVersion, 2);
+    assert.ok(Number.isFinite(Date.parse(readiness.backendStartedAt)));
     const forbidden = await fetch(`${url}/api/sessions`, {
       method: 'POST',
       headers: { Origin: 'https://unrelated.example' },

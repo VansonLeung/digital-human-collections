@@ -8,6 +8,7 @@ export const appRoot = fileURLToPath(new URL('../../', import.meta.url));
 dotenv({ path: path.join(appRoot, '.env'), quiet: true });
 
 const envSchema = z.object({
+  APP_DATA_DIR: z.string().default(path.join(appRoot, 'runtime')),
   APP_HOST: z.string().default('127.0.0.1'),
   APP_PORT: z.coerce.number().int().min(1).max(65535).default(8000),
   LLM_BASE_URL: z.url().default('http://127.0.0.1:1234/v1'),
@@ -39,5 +40,5 @@ export type Config = z.infer<typeof envSchema> & { mediaDir: string };
 
 export function readConfig(overrides: Record<string, unknown> = {}): Config {
   const values = envSchema.parse({ ...process.env, ...overrides });
-  return { ...values, mediaDir: path.join(appRoot, 'runtime/media') };
+  return { ...values, mediaDir: path.join(path.resolve(appRoot, values.APP_DATA_DIR), 'media') };
 }

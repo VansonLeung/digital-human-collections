@@ -27,7 +27,13 @@ type Callbacks = {
   changed: (state: UserSpeechState) => void;
   phraseStarted: (group: string, index: number, text: string) => void;
   interrupted: (group: string) => void;
-  commit: (text: string, context: UserSpeechContext, group: string, automatic: boolean) => boolean;
+  commit: (
+    text: string,
+    context: UserSpeechContext,
+    group: string,
+    automatic: boolean,
+    phrases: string[],
+  ) => boolean;
   error: (message: string, diagnostic?: ReplyDiagnostic) => void;
 };
 
@@ -119,7 +125,10 @@ export class UserMessageSpeechController {
                 virtualScenesEnabled: context.virtualScenesEnabled ?? false,
                 autoEnterScenes: context.autoEnterScenes ?? false,
                 autoRecoverStalls: context.autoRecoverStalls ?? true,
+                naturalVariation: context.naturalVariation ?? true,
                 aboutMe: context.aboutMe ?? '',
+                miraBehavior: context.miraBehavior ?? '',
+                miraAngryHopEnabled: context.miraAngryHopEnabled ?? true,
               }),
           language: context.language,
         },
@@ -234,6 +243,7 @@ export class UserMessageSpeechController {
         { ...context, language: plan.language },
         operation.group,
         automatic,
+        parsed.data,
       );
       if (!sent) {
         this.callbacks.interrupted(operation.group);

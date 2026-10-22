@@ -31,6 +31,7 @@ test('client preferences retain toggles and parameters without conversation or c
     virtualScenesEnabled: true,
     autoEnterScenes: true,
     autoRecoverStalls: false,
+    naturalVariation: false,
     aboutMe: 'I like quiet walks.\nI prefer tea.',
     autoReplyMode: 'spoken' as const,
     manualMessageMode: 'spoken' as const,

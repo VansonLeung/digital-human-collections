@@ -35,6 +35,24 @@ await run('ffmpeg', [
   path.join(qa, 'voice.wav'),
 ]);
 
+await run('ffmpeg', [
+  '-v',
+  'error',
+  '-y',
+  '-i',
+  path.join(qa, 'voice.wav'),
+  '-t',
+  '0.35',
+  '-c:a',
+  'pcm_s16le',
+  path.join(qa, 'reaction-short.wav'),
+]);
+const shortWav = await readFile(path.join(qa, 'reaction-short.wav'));
+const reactionPhrases = [
+  'Who said I like you?',
+  'Do not tease me like that!',
+  'I am not blushing.',
+];
 const wav = await readFile(path.join(qa, 'voice.wav'));
 
 const duration = (wav.length - 44) / 48000;
@@ -51,6 +69,8 @@ const llmRequests: any[] = [];
 const speechEvents: any[] = [];
 const sentCommands: any[] = [];
 const maleSpeechRequests: any[] = [];
+let continuationCalls = 0;
+let sceneDialogueCalls = 0;
 let maleConfigured = true;
 let failMaleSpeech = false;
 const suggestedDraft = 'Tell me more about that.';
@@ -116,6 +136,22 @@ const mock = createServer(async (req, res) => {
   if (req.url === '/v1/chat/completions') {
     const input = JSON.parse(body);
     llmRequests.push(input);
+    if (input.messages[0].content.startsWith('Plan small fictional')) {
+      const steps =
+        process.env.BROWSER_SCENES_ONLY === 'true'
+          ? [
+              {
+                location: 'Dessert shop',
+                activity: `A new moment ${++continuationCalls}`,
+                narration: `They share another moment at the table, number ${continuationCalls}.`,
+                leader: 'together',
+              },
+            ]
+          : [];
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ steps }) } }] }));
+      return;
+    }
     const finalContent = input.messages.at(-1).content;
     const quotedMessage = finalContent.match(/^Given I say:\n([^\n]+)\n\nRESPONSE REQUIREMENTS:\n/);
     const text = quotedMessage ? JSON.parse(quotedMessage[1]) : finalContent;
@@ -229,7 +265,9 @@ const mock = createServer(async (req, res) => {
     if (text.startsWith('scene-')) {
       const proposal =
         text === 'scene-offer'
-          ? scenePlan
+          ? process.env.BROWSER_SCENES_ONLY === 'true'
+            ? { ...scenePlan, steps: scenePlan.steps.slice(0, 2) }
+            : scenePlan
           : text === 'scene-major-change'
             ? { ...scenePlan, title: 'A garden visit' }
             : undefined;
@@ -240,7 +278,9 @@ const mock = createServer(async (req, res) => {
             ? 'Would you like a garden visit after dessert?'
             : text === 'scene-arrive'
               ? 'The menu is here; we have arrived.'
-              : 'I can see a quiet table near the window.';
+              : process.env.BROWSER_SCENES_ONLY === 'true'
+                ? `This dessert has a different flavour, number ${++sceneDialogueCalls}.`
+                : 'I can see a quiet table near the window.';
       reply = JSON.stringify([
         {
           phrase,
@@ -252,6 +292,80 @@ const mock = createServer(async (req, res) => {
         },
       ]);
     }
+    if (['scene-accept', 'scene-future', 'scene-agreed-change'].includes(text)) {
+      const stateLine = finalContent
+        .split('Authoritative scene state (quoted data): ')[1]
+        ?.split('\n')[0];
+      const state = stateLine ? JSON.parse(stateLine) : undefined;
+      const phrase = text === 'scene-future' ? 'Yes, another day.' : 'Yes, let us go now.';
+      const proposal =
+        text === 'scene-accept'
+          ? undefined
+          : {
+              title: text === 'scene-future' ? 'A future garden visit' : 'A bookstore visit',
+              steps: [
+                {
+                  location: 'Bookstore doorway',
+                  activity: 'Arriving',
+                  narration: 'They arrive at a quiet bookstore.',
+                  leader: 'together',
+                },
+                {
+                  location: 'Bookstore shelves',
+                  activity: 'Browsing',
+                  narration: 'They browse books together.',
+                  leader: 'together',
+                },
+              ],
+            };
+      reply = JSON.stringify([
+        {
+          phrase,
+          emotion: 'happy',
+          gestures: [],
+          ...(proposal ? { sceneProposal: proposal } : {}),
+          sceneAgreement: {
+            ...(text === 'scene-accept' ? { proposalId: state.proposal.id } : {}),
+            offerQuote: text,
+            acceptanceQuote: phrase,
+            timing: text === 'scene-future' ? 'later' : 'now',
+          },
+        },
+      ]);
+    }
+    if (text === 'I enjoy quiet walks.')
+      reply = JSON.stringify([
+        {
+          phrase: 'I prefer tea.',
+          emotion: 'happy',
+          gestures: [],
+          memories: [
+            {
+              owner: 'user',
+              category: 'interests',
+              key: 'quiet_walks',
+              value: 'Enjoys quiet walks.',
+              quote: 'I enjoy quiet walks.',
+            },
+            {
+              owner: 'mira',
+              category: 'preferences',
+              key: 'drink',
+              value: 'Prefers tea.',
+              quote: 'I prefer tea.',
+            },
+          ],
+        },
+      ]);
+    if (text === 'angry-reaction')
+      reply = JSON.stringify(
+        reactionPhrases.map((phrase, index) => ({
+          phrase,
+          emotion: index === 0 ? 'angry' : 'neutral',
+          gestures: [],
+          ...(index === 0 ? { reaction: { name: 'flustered_denial', intensity: 0.85 } } : {}),
+        })),
+      );
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     if (text === 'slow') await new Promise((r) => setTimeout(r, 1200));
     if (isDraft) await new Promise((resolve) => setTimeout(resolve, isSpoken ? 1200 : 500));
@@ -282,10 +396,10 @@ const mock = createServer(async (req, res) => {
     ttsEmotions.push(emotion);
     res.writeHead(200, {
       'Content-Type': 'audio/wav',
-      'X-Audio-Duration': String(duration),
+      'X-Audio-Duration': String(reactionPhrases.includes(text) ? 0.35 : duration),
       'X-Sample-Rate': '24000',
     });
-    res.end(wav);
+    res.end(reactionPhrases.includes(text) ? shortWav : wav);
     return;
   }
   if (req.url === '/v1/audio/transcriptions') {
@@ -324,6 +438,7 @@ const backend = spawn(process.execPath, ['backend/dist/server.js'], {
   env: {
     ...process.env,
     APP_PORT: String(port),
+    APP_DATA_DIR: path.join(qa, `browser-data-${port}`),
     LLM_BASE_URL: provider + '/v1',
     LLM_API_KEY: 'test-only',
     LLM_MODEL_NAME: 'mock',
@@ -396,7 +511,7 @@ page.on('requestfailed', (request) =>
   console.log('Failed browser request:', request.url(), request.failure()?.errorText),
 );
 
-try {
+async function checkFullBrowser() {
   await page.goto(url);
   await page.getByText('Persona ready', { exact: true }).waitFor({ timeout: 30000 });
   assert.equal(await page.getByRole('combobox', { name: 'Reply language' }).inputValue(), 'auto');
@@ -422,6 +537,10 @@ try {
   await page.screenshot({ path: path.join(qa, 'studio-tsundere-preview.png'), fullPage: true });
   await page.getByRole('button', { name: 'Return to idle', exact: true }).click();
   await new Promise((resolve) => setTimeout(resolve, 500));
+  await page.getByRole('button', { name: '嬲爆跳 · Angry hop', exact: true }).click();
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  await page.screenshot({ path: path.join(qa, 'studio-angry-hop.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Return to idle', exact: true }).click();
   await page.getByText('VRM poses · 姿勢', { exact: true }).click();
   await page.getByRole('button', { name: 'Start conversation', exact: true }).click();
   await page.getByRole('button', { name: 'Introduce yourself', exact: false }).waitFor();
@@ -479,6 +598,10 @@ try {
       await page.getByRole('button', { name: 'Replay voice' }).waitFor({ timeout: 30000 });
     }
   }
+  // The remaining pose/settings checks require a VRM, regardless of the order
+  // supplied in BROWSER_PERSONAS (which may finish with a Live2D avatar).
+  await page.getByRole('combobox', { name: 'Choose persona' }).selectOption('constraint-twist');
+  await page.getByText('Persona ready', { exact: true }).waitFor({ timeout: 30000 });
   await page.getByRole('combobox', { name: 'Reply language' }).selectOption('yue');
   assert.equal(await page.getByRole('checkbox', { name: 'Spoken replies' }).isChecked(), false);
   await page.getByRole('combobox', { name: 'Reply language' }).selectOption('auto');
@@ -632,8 +755,21 @@ try {
   });
   assert.equal(await autoScenes.isChecked(), false);
   assert.equal(await recovery.isChecked(), true);
+  const variation = page.getByRole('checkbox', {
+    name: 'Natural conversation variation',
+    exact: true,
+  });
+  assert.equal(await variation.isChecked(), true);
   const focus = page.getByRole('checkbox', { name: 'Get to know each other', exact: true });
   const aboutMe = page.getByRole('textbox', { name: 'About me', exact: true });
+  const characterSetting = page.getByRole('textbox', { name: 'About Mira', exact: true });
+  await characterSetting.fill('Mira likes me secretly and reacts with playful embarrassed anger.');
+  assert.equal(
+    await page
+      .getByRole('checkbox', { name: 'Embarrassed angry-hop reaction', exact: true })
+      .isChecked(),
+    true,
+  );
   const profile = 'I enjoy quiet walks.\nI prefer tea after work.';
   const editedProfile = `${profile}\nI like rainy evenings.`;
   assert.equal(await focus.isChecked(), false);
@@ -684,7 +820,7 @@ try {
       `Changed phrase delay should apply within the live session; observed ${elapsed}ms`,
     );
   }
-  assert.match(llmLanguages.at(-1)!, /two to six natural spoken clauses/);
+  assert.match(llmLanguages.at(-1)!, /NATURAL VARIATION/);
 
   // Speech reveals at the actual audio start, rather than JSON receipt.
   await page.getByRole('button', { name: 'Clear conversation', exact: true }).click();
@@ -750,7 +886,10 @@ try {
   for (const request of swearingConversation) {
     assert.match(request.messages.at(-1).content, /LOCALIZED PROFANITY MODE: ON/);
     assert.match(request.messages.at(-1).content, /CONVERSATION FOCUS: GET TO KNOW EACH OTHER/);
-    assert.ok(request.messages.at(-1).content.includes(JSON.stringify(profile)));
+    assert.equal(
+      request.messages.at(-1).content.includes(JSON.stringify(profile)),
+      request.messages[0].content.includes('FROM THE USER'),
+    );
     assert.ok(!request.messages.at(-1).content.includes('a little seductive'));
   }
   assert.ok(
@@ -815,11 +954,11 @@ try {
   assert.match(await page.locator('.auto-reply-options').innerText(), /paused/);
   await composer.fill('');
 
-  // Browser preferences persist, but a reload does not recreate a running chat.
+  // Browser preferences persist on a fresh root page. Saved-URL reloads are checked separately.
   await display.selectOption('phrases');
   await page.getByRole('spinbutton', { name: 'Auto reply delay seconds' }).fill('2.5');
   await phraseDelay.fill('0.5');
-  await page.reload();
+  await page.goto(url);
   await page.getByText('VRM poses · 姿勢', { exact: true }).click();
   assert.equal(await poseStrength.inputValue(), '0.75');
   assert.equal(
@@ -830,6 +969,7 @@ try {
   assert.equal(await swearing.isChecked(), true);
   assert.equal(await focus.isChecked(), true);
   assert.equal(await aboutMe.inputValue(), editedProfile);
+  assert.match(await characterSetting.inputValue(), /likes me secretly/);
   assert.equal(await auto.isChecked(), true);
   assert.equal(await page.getByRole('checkbox', { name: 'Proactive chat' }).isChecked(), true);
   assert.equal(await page.getByRole('checkbox', { name: 'Spoken replies' }).isChecked(), false);
@@ -1016,7 +1156,10 @@ try {
   for (const request of spokenSwearing) {
     assert.match(request.messages.at(-1).content, /LOCALIZED PROFANITY MODE: ON/);
     assert.match(request.messages.at(-1).content, /CONVERSATION FOCUS: GET TO KNOW EACH OTHER/);
-    assert.ok(request.messages.at(-1).content.includes(JSON.stringify(profile)));
+    assert.equal(
+      request.messages.at(-1).content.includes(JSON.stringify(profile)),
+      request.messages[0].content.includes('FROM THE USER'),
+    );
   }
   assert.equal(
     sentCommands.filter((command) => command.type === 'turn.send').at(-1).automatic,
@@ -1060,6 +1203,7 @@ try {
   await page.getByText('Conversation settings', { exact: true }).click();
   assert.equal(await autoMode.inputValue(), 'spoken');
   assert.equal(await focus.isChecked(), true);
+  assert.equal(await characterSetting.inputValue(), '');
   assert.equal(await aboutMe.inputValue(), profile);
   await page.getByRole('button', { name: 'Reset settings', exact: true }).click();
   assert.equal(await manualMode.inputValue(), 'text');
@@ -1129,10 +1273,27 @@ try {
   await page.getByRole('button', { name: 'Clear conversation', exact: true }).click();
   await autoScenes.check();
   await page.locator('.speech-toggle').click();
-  const beforeAutoEntry = sentCommands.length;
   await composer.fill('scene-offer');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await page.getByText('A quiet dessert outing', { exact: true }).waitFor();
+  await page
+    .getByRole('button', { name: 'Send message', exact: true })
+    .waitFor({ state: 'visible' });
+  await page.waitForFunction(
+    () => !(document.querySelector('[aria-label="Suggest reply"]') as HTMLButtonElement)?.disabled,
+  );
+  assert.equal(
+    await page.locator('.scene-event-card').count(),
+    0,
+    'An invitation alone cannot auto-enter',
+  );
+  const beforeAutoEntry = sentCommands.length;
+  await composer.fill('scene-accept');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page
+    .locator('.message.assistant .bubble')
+    .filter({ hasText: 'Yes, let us go now.' })
+    .waitFor();
   assert.equal(await page.locator('.scene-event-card').count(), 0);
   await page.locator('.scene-event-card').waitFor({ timeout: 15000 });
   const entryCommands = sentCommands.slice(beforeAutoEntry);
@@ -1142,6 +1303,60 @@ try {
   assert.equal(entryCommands.filter((item) => item.type === 'scene.decide').length, 1);
   assert.equal(await page.locator('.scene-proposal-card').count(), 0);
   await page.locator('.speech-toggle').click();
+  await sendScene('scene-future');
+  assert.equal(await page.locator('.scene-event-card').count(), 1);
+  await page.getByText('Agreed for later · 留待之後', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Keep chatting', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.scene-proposal-card'));
+  await sendScene('scene-agreed-change');
+  await page.waitForFunction(() => document.querySelectorAll('.scene-event-card').length === 2);
+  assert.match(await page.getByLabel('Current virtual scene').innerText(), /Bookstore doorway/);
+  // Session memory is inspectable and editable, is included in both generation paths, and clears on reset.
+  await sendScene('I enjoy quiet walks.');
+  await page.getByText('Conversation memory · 本次對話記憶 (2)', { exact: true }).click();
+  const miraMemory = page.getByRole('textbox', { name: 'Memory: drink', exact: true });
+  assert.equal(await miraMemory.inputValue(), 'Prefers tea.');
+  await miraMemory.fill('Prefers coffee.');
+  await page
+    .locator('.memory-row')
+    .filter({ hasText: 'Mira · fictional character' })
+    .getByRole('button', { name: 'Save memory', exact: true })
+    .click();
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('.memory-row small')].some((node) =>
+      node.textContent?.includes('edited by you'),
+    ),
+  );
+  const memoryRequestStart = llmRequests.length;
+  await page.getByRole('button', { name: 'Suggest reply', exact: true }).click();
+  await composer.waitFor({ state: 'visible' });
+  await page.waitForFunction(
+    () =>
+      (document.querySelector('[aria-label="Message"]') as HTMLTextAreaElement)?.value ===
+      'Tell me more about that.',
+  );
+  const memoryDraft = llmRequests
+    .slice(memoryRequestStart)
+    .find((request) => request.messages[0].content.includes('FROM THE USER'));
+  assert.match(memoryDraft.messages.at(-1).content, /Prefers coffee/);
+  assert.match(memoryDraft.messages.at(-1).content, /I enjoy quiet walks/);
+  assert.match(memoryDraft.messages.at(-1).content, /NATURAL VARIATION/);
+  await composer.fill('scene-memory-context');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.waitForFunction(
+    () => !(document.querySelector('[aria-label="Suggest reply"]') as HTMLButtonElement)?.disabled,
+  );
+  assert.match(llmRequests.at(-1).messages.at(-1).content, /Prefers coffee/);
+  assert.match(llmRequests.at(-1).messages.at(-1).content, /NATURAL VARIATION/);
+  await page
+    .locator('.memory-row')
+    .filter({ hasText: 'Mira · fictional character' })
+    .getByRole('button', { name: 'Forget memory', exact: true })
+    .click();
+  await page.waitForFunction(() => document.querySelectorAll('.memory-row').length === 1);
+  await page.screenshot({ path: path.join(qa, 'studio-session-memory.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Clear conversation', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.memory-row').length === 0);
   await scenes.uncheck();
   await sendScene('scene-mode-off');
   assert.equal(await page.getByLabel('Current virtual scene').count(), 0);
@@ -1192,14 +1407,18 @@ try {
   await page.getByRole('button', { name: 'Clear conversation', exact: true }).click();
   assert.equal(await page.locator('.scene-event-card').count(), 0);
   await scenes.check();
+  await variation.uncheck();
   await page.reload();
   await page.getByText('Conversation settings', { exact: true }).click();
+  assert.equal(await variation.isChecked(), false);
   assert.equal(await scenes.isChecked(), true);
   assert.equal(await autoScenes.isChecked(), true);
   assert.equal(await recovery.isChecked(), true);
   await page.getByRole('button', { name: 'Reset settings', exact: true }).click();
   assert.equal(await scenes.isChecked(), false);
+  assert.equal(await variation.isChecked(), true);
   await page.getByText('Conversation settings', { exact: true }).click();
+  await checkReactions();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(
     () =>
@@ -1224,6 +1443,9 @@ try {
       'raw response and exact LLM request body can be inspected and downloaded without credentials',
       'phrase bubbles follow audio starts and pause; text pacing supports Stop; replay does not duplicate bubbles',
       'automatic draft-and-send loop obeys limits and yields to typing',
+      'session memory quotes, editing, forgetting and reset; memory reaches both speakers',
+      'natural variation reaches both text and spoken generators; angry hop has a preview',
+      'scene invitations wait for mutual agreement, future plans remain pending, new outings can replace unfinished plans',
       'automatic repetition recovery tries a related angle then a fresh topic and pauses only on exhaustion',
       'chat continues while scene proposals are pending; opt-in automatic scene entry waits for playback',
       'manual spoken rewrite preview preserves original text and speaks edited phrases',
@@ -1231,10 +1453,11 @@ try {
       'Stop retains the draft and prevents submission; missing male voice disables playback',
       'automatic spoken replies share the queue and persist independent mode preferences',
       'automatic replies use animated typing dots without revealing the phrase editor, including after Stop',
-      'get-to-know focus and profile reach both speakers in text and spoken modes, persist across reloads and reset independently',
+      'get-to-know focus reaches both speakers while private profiles remain isolated; settings persist across reloads and reset independently',
       'editing the profile cancels pending automatic suggestions; generated claims do not update the profile',
       'browser settings persist across reloads and reset independently',
       'VRM pose previews work without a conversation, persist controls and accept LLM pose cues',
+      'reaction settings persist, short audio preserves the whole angry hop, inspector reports completion and cooldown',
       'ordered phrases with gesture metadata',
       'typed reply and hidden-reasoning exclusion',
       'automatic ASR and editable transcript',
@@ -1258,6 +1481,272 @@ try {
   };
   await writeFile(path.join(qa, 'browser-results.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
+}
+
+async function checkReactions() {
+  await page.goto(url);
+  await page.getByText('Persona ready', { exact: true }).waitFor();
+  const settings = page.locator('.conversation-settings');
+  if (!(await settings.evaluate((node) => (node as HTMLDetailsElement).open)))
+    await settings.locator(':scope > summary').click();
+  const character = page.getByRole('textbox', { name: 'About Mira', exact: true });
+  await character.fill(
+    'MIRA_PRIVATE_9D: Mira likes me secretly and reacts with playful embarrassed anger.',
+  );
+  await page
+    .getByRole('textbox', { name: 'About me', exact: true })
+    .fill('USER_PRIVATE_5A: I collect vintage cameras.');
+  await page.getByRole('checkbox', { name: 'Embarrassed angry-hop reaction', exact: true }).check();
+  await page.reload();
+  await page.getByText('Persona ready', { exact: true }).waitFor();
+  await settings.locator(':scope > summary').click();
+  assert.match(await character.inputValue(), /likes me secretly/);
+  await page.getByRole('button', { name: 'Start conversation', exact: true }).click();
+  const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+  await composer.fill('angry-reaction');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.getByText('Performance inspector · 動作檢查', { exact: true }).click();
+  const inspector = page.locator('.performance-inspector');
+  await inspector.getByText('angry_hop: completed', { exact: true }).waitFor({ timeout: 12000 });
+  assert.match(await inspector.innerText(), /angry_hop \(0.8\)/);
+  assert.match(await inspector.innerText(), /reaction_mapped · finished/);
+  const miraRequest = JSON.stringify(llmRequests.at(-1));
+  assert.match(miraRequest, /MIRA_PRIVATE_9D/);
+  assert.doesNotMatch(miraRequest, /USER_PRIVATE_5A/);
+  await page.getByRole('button', { name: 'Suggest reply', exact: true }).click();
+  await page.waitForFunction(
+    (text) =>
+      (document.querySelector('[aria-label="Message"]') as HTMLTextAreaElement)?.value === text,
+    suggestedDraft,
+  );
+  const userRequest = JSON.stringify(llmRequests.at(-1));
+  assert.match(userRequest, /USER_PRIVATE_5A/);
+  assert.doesNotMatch(userRequest, /MIRA_PRIVATE_9D/);
+  await page.screenshot({
+    path: path.join(qa, 'studio-performance-inspector.png'),
+    fullPage: true,
+  });
+  await composer.fill('angry-reaction');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await inspector.getByText('cooldown · finished', { exact: true }).waitFor({ timeout: 12000 });
+  await inspector.locator('summary').click();
+  await settings.locator(':scope > summary').click();
+  assert.deepEqual(errors, []);
+}
+
+async function checkHistory() {
+  await page.goto(url);
+  await page.getByText('Persona ready', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Start conversation', exact: true }).click();
+  if (await page.getByRole('checkbox', { name: 'Spoken replies' }).isChecked())
+    await page.locator('.speech-toggle').click();
+  const settings = page.locator('.conversation-settings');
+  await settings.locator(':scope > summary').click();
+  await page.getByRole('checkbox', { name: 'Virtual scenes', exact: true }).check();
+  await page
+    .getByRole('textbox', { name: 'About me', exact: true })
+    .fill('USER_SAVED_PRIVATE_42: I collect cameras.');
+  await page
+    .getByRole('textbox', { name: 'About Mira', exact: true })
+    .fill('MIRA_SAVED_PRIVATE_53: Likes tea.');
+  await page.getByRole('combobox', { name: 'Mira message display' }).selectOption('phrases');
+  const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+  const sendMessage = async (text: string) => {
+    await composer.fill(text);
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await page.waitForFunction(() =>
+      document.querySelector('.presence')?.textContent?.includes('Persona ready'),
+    );
+  };
+  await sendMessage('I enjoy quiet walks.');
+  await page.waitForURL(/\/conversations\/[0-9a-f-]+$/);
+  const firstUrl = page.url();
+  const firstId = firstUrl.split('/').at(-1)!;
+  const historyPanel = page.locator('.conversation-history');
+  await historyPanel.locator(':scope > summary').click();
+  await historyPanel.getByRole('link', { name: 'I enjoy quiet walks.', exact: true }).waitFor();
+  assert.equal(
+    await historyPanel.getByRole('textbox', { name: 'Conversation URL' }).inputValue(),
+    firstUrl,
+  );
+  const archive = await fetch(`${url}/api/conversations/${firstId}`).then((response) =>
+    response.json(),
+  );
+  assert.ok(
+    archive.state.memories.some(
+      (memory: any) => memory.owner === 'mira' && memory.quote === 'I prefer tea.',
+    ),
+  );
+  const countBeforeReload = await page.locator('.message').count();
+  const callsBeforeReload = llmRequests.length;
+  await page.reload();
+  await composer.waitFor({ state: 'visible' });
+  await page.waitForFunction(
+    () => !(document.querySelector('[aria-label="Message"]') as HTMLTextAreaElement)?.disabled,
+  );
+  assert.equal(await page.locator('.message').count(), countBeforeReload);
+  assert.equal(
+    llmRequests.length,
+    callsBeforeReload,
+    'Loading never triggers an LLM reply or speech',
+  );
+  await sendMessage('scene-offer');
+  await page.getByRole('button', { name: 'Start this scene', exact: true }).click();
+  await page.locator('.scene-event-card').waitFor();
+  await page.waitForFunction(async (id) => {
+    const saved = await fetch(`/api/conversations/${id}`).then((response) => response.json());
+    return !!saved.state.scene.active;
+  }, firstId);
+  const beforeResume = await page.locator('.message').count();
+  await page.reload();
+  await page.getByRole('textbox', { name: 'Message', exact: true }).waitFor();
+  await page.locator('.scene-event-card').waitFor();
+  assert.equal(await page.locator('.message').count(), beforeResume);
+  assert.match(await page.getByLabel('Current virtual scene').innerText(), /On the way.*Walking/s);
+  await historyPanel.locator(':scope > summary').click();
+  await historyPanel.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await page.waitForURL(url + '/');
+  await sendMessage('A different conversation');
+  await page.waitForURL(/\/conversations\/[0-9a-f-]+$/);
+  const secondUrl = page.url();
+  assert.notEqual(secondUrl, firstUrl);
+  await page.goBack();
+  await page.waitForURL(firstUrl);
+  await page.locator('.scene-event-card').waitFor();
+  await page.goForward();
+  await page.waitForURL(secondUrl);
+  await page
+    .locator('.message.user .bubble')
+    .filter({ hasText: /^A different conversation$/ })
+    .waitFor();
+  await page.waitForFunction(
+    () => !(document.querySelector('[aria-label="Message"]') as HTMLTextAreaElement)?.disabled,
+  );
+  await sendMessage('Hello again');
+  const lastRequest = llmRequests.at(-1);
+  assert.ok(
+    lastRequest.messages.some(
+      (message: any) => message.role === 'user' && message.content === 'A different conversation',
+    ),
+  );
+  assert.ok(
+    lastRequest.messages.some(
+      (message: any) => message.role === 'assistant' && message.content.includes('Hello.'),
+    ),
+  );
+  assert.ok(!JSON.stringify(lastRequest).includes('USER_SAVED_PRIVATE_42'));
+  await page.getByRole('button', { name: 'Clear conversation', exact: true }).click();
+  await page.waitForURL(url + '/');
+  await page.reload();
+  await page.getByRole('button', { name: 'Start conversation', exact: true }).waitFor();
+  assert.equal(await page.locator('.message').count(), 0);
+  assert.equal(
+    (await fetch(`${url}/api/conversations`).then((response) => response.json())).length,
+    2,
+  );
+  assert.deepEqual(errors, []);
+  await page.screenshot({ path: path.join(qa, 'studio-saved-history.png'), fullPage: true });
+  console.log(
+    JSON.stringify({
+      passed: true,
+      checks: [
+        'autosave and history list',
+        'stable URLs and reload without generation',
+        'memories and scenes restored',
+        'new chat and browser Back/Forward',
+        'resumed plain-text LLM history and private profiles',
+      ],
+    }),
+  );
+}
+
+async function checkSceneContinuation() {
+  await page.goto(url);
+  await page.getByText('Persona ready', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Start conversation', exact: true }).click();
+  if (await page.getByRole('checkbox', { name: 'Spoken replies' }).isChecked())
+    await page.locator('.speech-toggle').click();
+  await page.locator('.conversation-settings > summary').click();
+  await page.getByRole('checkbox', { name: 'Virtual scenes', exact: true }).check();
+  const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+  const suggest = page.getByRole('button', { name: 'Suggest reply', exact: true });
+  const send = async (text: string) => {
+    await composer.fill(text);
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await page.waitForFunction(
+      () =>
+        !(document.querySelector('[aria-label="Suggest reply"]') as HTMLButtonElement)?.disabled,
+    );
+  };
+  await send('scene-offer');
+  await page.getByRole('button', { name: 'Start this scene', exact: true }).click();
+  await page.locator('.scene-event-card').waitFor();
+  let turns = 0;
+  for (let card = 2; card <= 4; card++) {
+    await send(`scene-next-${++turns}`);
+    await send(`scene-next-${++turns}`);
+    assert.equal(await page.locator('.scene-event-card').count(), card - 1);
+    await suggest.click();
+    await page.waitForFunction(
+      () =>
+        !(document.querySelector('[aria-label="Suggest reply"]') as HTMLButtonElement)?.disabled,
+    );
+    assert.equal(await page.locator('.scene-event-card').count(), card);
+    const state = await page.getByLabel('Current virtual scene').innerText();
+    assert.match(state, new RegExp(`Stage ${card} · ongoing`));
+    assert.match(state, /Dessert shop/);
+    const request = llmRequests.at(-1);
+    assert.match(request.messages[0].content, /CURRENT FICTIONAL PHYSICAL STATE/);
+    assert.match(request.messages[0].content, /Dessert shop/);
+    if (card > 2) assert.match(request.messages[0].content, new RegExp(`A new moment ${card - 2}`));
+  }
+  assert.equal(continuationCalls, 2);
+  await page.waitForURL(/\/conversations\/[0-9a-f-]+$/);
+  const id = page.url().split('/').at(-1)!;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const saved = await fetch(`${url}/api/conversations/${id}`).then((r) => r.json());
+    if (saved.messages.filter((m: any) => m.role === 'scene').length === 4) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const calls = llmRequests.length;
+  await page.reload();
+  await page.getByLabel('Current virtual scene').waitFor();
+  assert.equal(await page.locator('.scene-event-card').count(), 4);
+  assert.match(await page.getByLabel('Current virtual scene').innerText(), /Stage 4 · ongoing/);
+  assert.equal(llmRequests.length, calls, 'reloading restores the scene without generating');
+  assert.deepEqual(errors, []);
+  await page.screenshot({ path: path.join(qa, 'studio-scene-continuation.png'), fullPage: true });
+  console.log(
+    JSON.stringify({
+      passed: true,
+      checks: [
+        'legacy two-card plan continues through four cards',
+        'automatic draft uses the new scene before Mira replies',
+        'rolling stage IDs and completed cards survive URL reload',
+      ],
+    }),
+  );
+}
+
+try {
+  if (process.env.BROWSER_SCENES_ONLY === 'true') {
+    await checkSceneContinuation();
+  } else if (process.env.BROWSER_HISTORY_ONLY === 'true') {
+    await checkHistory();
+  } else if (process.env.BROWSER_REACTIONS_ONLY === 'true') {
+    await page.goto(`http://127.0.0.1:${port}`);
+    await checkReactions();
+    console.log(
+      JSON.stringify({
+        passed: true,
+        checks: [
+          'reaction settings persist',
+          'three short audio phrases preserve the full hop',
+          'inspector completion and cooldown',
+        ],
+      }),
+    );
+  } else await checkFullBrowser();
 } catch (error) {
   await page.screenshot({ path: path.join(qa, 'failure.png'), fullPage: true });
   console.log('Browser errors:', errors);

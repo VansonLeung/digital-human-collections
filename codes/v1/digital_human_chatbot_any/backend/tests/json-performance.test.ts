@@ -132,7 +132,7 @@ test('subsequent LLM HTTP requests carry plain assistant history in streaming an
         { role: 'user', content: command.text },
         { role: 'assistant', content: '你好！ 八爪魚有八條腕。' },
       ]);
-      assert.equal(requests[1].messages[0].content, systemPrompt());
+      assert.equal(requests[1].messages[0].content, systemPrompt(false, true));
       assert.equal(requests[1].messages.at(-1).role, 'user');
       assert.ok(
         requests[1].messages

@@ -412,9 +412,20 @@ The frontend sends one versioned decision for a validated pending proposal;
 stale decisions remain rejected by the backend. Auto-entry does not pause the
 automatic conversation. **Keep chatting** dismisses the proposal and suppresses
 that title for the session. Both automatic and proactive chat continue normally
-in the current setting while a proposal is pending. Generated user dialogue
-cannot accept a scene by saying yes. New proposals are rejected while an outing
-is unfinished.
+in the current setting while a proposal is pending.
+
+A spoken agreement is represented by validated `sceneAgreement` metadata, with
+an exact quote from the latest counterpart message and an agreeing quote from
+Mira's reply. `timing: now` permits auto-entry; `later` stays pending. An invitation
+alone never auto-starts. New proposals may replace unfinished outings after
+acceptance, and accepted new invitations can replace an older pending proposal.
+If an outing-related reply omits both scene controls, a focused metadata-only
+completion extracts the proposal/agreement from the already generated dialogue.
+It runs at most once, with a 25-second timeout, while speech can already start;
+ordinary turns and replies that supplied scene controls make no extra call.
+Invalid or failed optional extraction leaves chat available without inventing
+acceptance. Primary dialogue, histories and TTS are not regenerated.
+There is no two-outing limit. Initial greetings no longer require a scene plan.
 
 `backend/src/scenes/VirtualScene.ts` owns authoritative per-session state. After
 two successfully completed Mira turns, it advances one small step at the start
@@ -481,8 +492,11 @@ No extra LLM call is made.
 
 **About me · 關於我** is optional free text, bounded to 2000 characters. It and the
 toggle persist in the existing browser settings. The profile is included as
-quoted user-supplied data for Mira's normal/proactive replies and both suggested
-user reply formats, independently of whether the focus toggle is on. It is never
+quoted private data only for suggested user replies (text and spoken-phrase
+formats), independently of whether the focus toggle is on. Mira never receives
+it in normal, proactive, retry or recovery requests. About Mira is likewise
+private to Mira: user-side requests never receive it. Each speaker learns the
+other's details through dialogue and evidence-backed shared conversation memory. It is never
 added to conversation history or changed by generated dialogue. Manual faithful
 rewrites receive only their source text and rewrite contract, not the profile or
 conversation bias. Editing the controls pauses automation and cancels stale
@@ -668,3 +682,245 @@ Focus automated tests on interrupted tasks, stale events/media, provider streami
 Retain the earlier plan's approximate 150 ms lip-sync offset, 300 ms browser Stop response and warm short-reply timing goals as evaluation targets. Measure p50/p95 and cold starts; no such performance is established by this proposal. The completed application must demonstrate genuine reply-driven face animation as well as working chat and audio.
 
 The first concrete deliverable should be **one complete typed turn producing a new TTS WAV and synchronized VRM speech**, followed by recording/transcription and the Live2D adapter. This resolves the central local-rendering question with the assets and speech foundation already available.
+
+
+### Session memory and natural variation
+
+`backend/src/conversation/ConversationMemory.ts` keeps up to 48 supported details
+in the Session object only. Reset clears it; a new browser conversation starts
+with empty memory. No memory file or database is created; existing error diagnostics still capture
+request bodies for inspection. Mira may establish
+modest fictional preferences; user facts require exact evidence from the current
+manual/reviewed message. Unreviewed generated male messages cannot establish user
+facts. Fictional outings remain scene events rather than real-user biography. Up to six earlier outing summaries retain
+only the last location/activity actually reached, not unvisited planned steps.
+They are visible in the memory panel and remain marked fictional.
+
+The first complete Mira phrase object may carry up to two `memories` candidates.
+The parser strips metadata from speech and validates each candidate separately.
+Only accepted, successfully completed replies commit memory (including audio
+completion). Rejected repetition attempts, Stop and failed playback do not commit.
+Entries keep owner, category, stable key, source quote and source turn. Duplicate
+facts are ignored. Manual edits to Mira facts take priority over generated
+character updates; newer manual user facts can correct older user facts.
+
+Conversation settings contains an inspect/edit/forget panel. Memory edits are
+versioned, cancel stale preparations and pause automation. Reset clears the panel.
+Relevant memory (at most six entries, preserving both owners when possible) is
+included in both speakers' requests, including retries; it survives trimming the
+spoken history to twelve messages. Category coverage gently suggests broader
+aspects to notice, without requiring a question or inventing unknown answers.
+Extraction uses metadata in the existing Mira completion, with no extra LLM call.
+A conservative first-person preference matcher retains simple Mira statements
+when the model omits that metadata; it rejects hypothetical wording and copied
+counterpart phrases, and never extracts user facts from automatic dialogue.
+
+**Natural variation · 自然變化** defaults on and is saved in browser settings.
+`TurnDirector.ts` selects one delivery plan per speaker/request, reused on retries.
+Tone avoids that speaker's previous two choices; contribution avoids the previous
+choice. About 80% of casual turns target two to four spoken phrases and 10% allow
+three to six when useful. The remaining 10% may request one short reaction, only
+if neither of that speaker's previous two turns was brief; otherwise they use the
+normal length. Clauses belong in separate array items rather than one long phrase
+string. Explicit requests for brevity take precedence, and real tasks may require
+more detail.
+Ordinary Cantonese/Chinese dialogue targets roughly 10–20 characters per spoken
+clause and 30–60 overall; English targets roughly 4–12 words per clause and 20–45
+overall. These are prompt targets, not truncation or validation limits. Factual
+tasks and explicit requests for depth take precedence. Phrase count is independent
+of word count, and faithful manual message rewriting retains the supplied meaning.
+The focus mode keeps attentiveness without forcing an identical style every turn.
+Mira's tsundere reactions become occasional rather than mandatory; the male voice
+has no default role as payer, problem solver or leader. Identity, remembered facts,
+question relevance and the JSON contract remain stable. Turning the toggle off
+restores the earlier prompt style. Faithful manual rewriting is unaffected.
+
+### Conversation progress and crossed wrists
+
+`ConversationProgress.ts` keeps a bounded session-only ledger of eight completed
+exchanges: topic/angle, contribution summary and exact spoken evidence, up to six
+open questions, eight answered questions and a pending action. The first Mira
+phrase may carry validated `conversationProgress` metadata. It is stripped from
+speech and committed only after successful turn/playback completion, never on
+Stop. Both speakers receive these working notes through conversation context;
+reset clears them and they never become personal memory or scene authorization.
+
+The model is asked to reuse labels for the same meaning, even with different
+wording. Two non-progress exchanges cue a related angle, three a concrete next
+step, four a gentle fresh topic. A genuinely new supported contribution resets
+the stall count, as does an actual accepted scene change/step. If metadata is
+absent or unsupported, the app does not invent a semantic verdict: from the third
+completed exchange onward it asks for a meaning-based review of recent dialogue.
+These are model-assisted hints, not a guarantee of semantic repetition detection.
+The current move is repeated near the end of each speaker's request, after the
+format examples, to keep it salient in long prompts. With missing metadata a
+late conditional review asks for novelty without declaring the topic stalled.
+Latest questions and unresolved manual tasks take priority over topic changes.
+Existing bounded exact-copy retries and scene acceptance rules remain in force.
+
+The crossed-arm and three-quarter poses specify the wrist's full orientation:
+fingers across the body, palms inward toward the chest, thumbs upward relative
+to the chest. This replaces the ambiguous shortest-arc finger aiming for crossed
+contacts only; other wrist contacts retain their previous solver.
+
+### Angry hop motion
+
+`angry_hop` is a validated gesture and a VRM preview button. Angry emotion alone
+continues to drive only the face. `frontend/src/performance/motionLibrary.ts`
+samples three small hops and alternating arm swings with closed fists on the
+existing audio/preview clock. Optional finger and thumb bones curl together and
+release with the pose. This gesture keeps normal camera framing, without zooming
+out. The hips offset raises the skeleton by at most 3.5% of avatar height,
+without translating the scene root. Knee bends and planted-foot constraints apply
+on the ground; foot constraints release in flight. Stop/replacement blends back
+to the captured standing pose without accumulated displacement. The angry face
+keeps the speech mouth independent and does not add an open-mouth expression.
+
+### Configured Mira reactions and performance inspection
+
+Conversation settings separates `miraBehavior` (fictional character direction,
+up to 2000 characters) from `aboutMe` (real-user profile). Both persist in browser
+settings, displayed as **About Mira** and **About me**. Settings loading never
+copies text between these private fields. Both fields remain editable.
+Character direction is included near the end of Mira's current request and is
+not supplied as the male speaker's biography or as personal memory evidence.
+
+`miraAngryHopEnabled` enables the configured playful embarrassed-denial mapping.
+The model may add `reaction: {"name":"flustered_denial","intensity":0.85}`
+to one phrase with empty gestures. A single backend director maps intensity below
+0.65 to `tsundere_turn`, and stronger playful delivery to `angry_hop` at strength
+0.8. When hopping is disabled or cooling down, the turn is used instead. Facial
+emotion remains independent. Genuine distress, ordinary disagreement and factual
+questions are excluded. It does not force romantic denial on every
+turn. Normal angry emotion still only controls facial delivery.
+`MiraReactions.ts` enforces one hop per reply and three completed Mira replies
+between spoken triggers. Rejected generations, interrupted turns and text-only
+selections do not spend the cooldown. Reset clears it; pose previews are separate.
+Later held poses in the same reply cannot replace a selected hop. Turning the
+automatic hopping off does not forbid explicit gestures or previews; legacy
+`gestures` responses remain supported.
+
+The speech pose clock accumulates decoded phrase durations, preserving the same
+hop across untagged short phrase boundaries. Pause freezes it; when the last
+audio ends or buffers between clips, its bounded remaining sequence finishes on
+render time. Explicit Pause still freezes it. A new held
+pose, Stop, playback failure or avatar replacement cancels it. Angry-hop weights
+are independent of the fading speech envelope so the last hops remain visible.
+Other speech poses continue to follow their phrase audio clock.
+
+The collapsed Performance inspector keeps up to 24 recent phrase controls and
+32 pose lifecycle events in this tab. It shows parsed model selection, applied
+controls, server cooldown/duplicate decisions, playback status and unsupported
+avatar gestures. Pose events show starts, completion, pause/resume and cancellation
+reasons, including previews. It is session-local and is cleared on reset.
+
+Validation includes prompt/negative-rule assertions, parser-to-audio control
+propagation, family mapping, session cooldown, private-profile isolation across
+all prompt modes, settings ownership, three short-phrase hops,
+pause, natural completion and cancellation. `npm run eval:reactions -- --runs=3`
+uses the configured provider for repeated Mandarin/Cantonese/English positive
+cases, including a longer denial-heavy transcript, and factual, distress, cooldown
+and disabled negative cases. It records raw
+outputs and request bodies (without headers/credentials) in ignored
+`runtime/qa/reaction-eval.json`; this is a probabilistic live evaluation, not a
+mocked unit test. `--only=cooldown` reruns an individual scenario into a separate
+artifact without erasing the original results. Provider failures remain failures
+in the original report. Browser checks exercise settings persistence, the inspector
+and completion across three real short audio clips, followed by a blocked cooldown.
+`BROWSER_REACTIONS_ONLY=true npm run test:browser` runs that focused scenario;
+the normal browser suite runs the same scenario alongside the other regressions.
+Build the app first because browser checks serve the production bundles.
+
+Health includes the loaded performance protocol version and backend start time.
+The inspector warns when the connected backend lacks the reaction protocol:
+serving freshly built frontend files does not replace modules already loaded by
+an old `node dist/server.js` process. Restart that backend to load the changes;
+browser refresh alone is insufficient. Backend sessions exist only in memory,
+so restarting clears active conversations.
+
+
+### Saved conversations and resumable URLs
+
+Completed exchanges are saved automatically as versioned JSON files in
+`runtime/media/conversations/`. `APP_DATA_DIR` changes the runtime root. Audio
+expiry, session expiry, Clear conversation and backend restarts do not delete
+these files. Save now retries a save; Export JSON downloads the current completed
+transcript, including when a disk save has failed. Private profiles remain
+owner-specific when generating replies after a restore.
+
+The full saved transcript retains each displayed phrase and scene card. It is
+separate from the twelve-message model context, reconstructed as plain dialogue
+with automatic-user provenance preserved. Restores retain supported memories,
+current scene and completed-step count, conversation progress, per-conversation
+profile/delivery settings and angry-hop cooldown. Loading does not synthesize
+or replay old audio and leaves automation paused. Resume auto replies explicitly
+or send a new message to continue. Historical audio URLs and diagnostics are not
+stored in the transcript.
+
+Open Saved conversations → a conversation, or navigate directly to
+`/conversations/<uuid>`. Browser reload and Back/Forward restore that conversation
+into a fresh live session. Multiple tabs can read the same chat; version checks
+reject stale writes instead of overwriting a newer branch. A rejected branch
+remains available through Export JSON. Closed sockets release their live-session
+slot; completed archives remain on disk.
+
+`backend/src/history/ConversationStore.ts` owns schema checks, atomic file
+replacement and version conflicts. `ConversationArchive.ts` owns the full
+transcript and turns it into bounded model context. The session coordinates
+successful-turn commits; REST routes own listing, loading and exporting. UI
+navigation and the history panel live in a dedicated hook/component.
+
+`npm run import:conversation -- path/to/conversation.json` imports an exported
+archive as a new copy, or a transcript with `messages: [{role, phrases}]`.
+Unmarked user lines in pasted transcripts retain uncertain provenance; imports
+do not invent memories, accepted scenes or private profiles. Imported plain
+transcripts keep the current browser persona/profile settings until a new
+completed exchange captures them; they cannot reconstruct the original setup. The supplied
+Cantonese report is preserved in
+`backend/tests/fixtures/cantonese-central-dinner.json` (26 messages, 68 bubbles).
+
+The missing-scene regression now includes the original dinner invitation,
+restaurant choice, departure and station meetup. Fallback extraction receives
+up to eight recent spoken messages to resolve references across turns. The gate
+recognizes Cantonese 我地, departure, arrival and meetup follow-ups; it remains
+an extraction trigger, not permission to start an outing. A valid scene proposal
+survives missing or invalid agreement metadata. Agreement still requires exact
+quotes from the current counterpart message and current Mira reply. Profiles
+never enter this extraction context.
+
+Validation: `npm test`, `npm run build`, and
+`BROWSER_HISTORY_ONLY=true npm run test:browser`. The focused browser test checks
+autosaving, a stable URL, reload without LLM/audio generation, restored memory and
+scene cards, a separate new chat, Back/Forward and plain-text model history.
+
+### Current scene grounding and continuing older plans
+
+Scene preparation runs before text suggestions, automatic spoken-user drafts,
+and Mira replies. After two completed Mira replies at a stage, its next card is
+emitted before either speaker generates the next message. Both the system context
+and the final response guidance identify the current location/activity as already
+underway. A stage's leader initiates that activity; it is not a permanent road-guide
+role. Stored spoken history remains unchanged.
+
+An initial outing prefers four to six small steps instead of combining arrival,
+an entire meal, drinks and payment into one card. Older two-step archives still
+load. At the end of a plan, `scenes/prepareScene.ts` can request up to three more
+small activities at the exact same venue. This optional request has a 20-second
+maximum; unavailable or invalid results leave the conversation running at the
+current activity, with another check only after two more completed replies. A
+valid ordered prefix survives a malformed later card, but no intermediate card
+is skipped. A different destination still uses the ordinary proposal/agreement
+flow and the user's scene-entry setting.
+
+`VirtualScene` retains a bounded planning window and an optional global step
+offset. Card IDs remain stable when the window rolls forward, and completed
+cards stay in the saved transcript. The UI shows an ongoing stage number instead
+of a fixed total. There is no two-card or six-card limit on an outing's history;
+continuation remains conditional on a useful next activity.
+
+Regression coverage uses the reported restaurant-arrival transcript in
+`backend/tests/fixtures/cantonese-restaurant-arrival.json`. Unit/integration checks
+cover both automatic formats, preparation ordering, stage grounding, cancellation,
+same-venue validation, more than six stages and save/restore. Run the focused UI
+check with `BROWSER_SCENES_ONLY=true npm run test:browser`; it continues a legacy
+two-card plan through four cards and reloads its saved URL.

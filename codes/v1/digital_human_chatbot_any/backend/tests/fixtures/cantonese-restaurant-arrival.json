@@ -1,0 +1,263 @@
+{
+  "reportedIssue": "Both voices continue road-navigation dialogue after the restaurant arrival card; the two-step plan has no continuation.",
+  "scene": {
+    "enabled": true,
+    "version": 4,
+    "active": {
+      "plan": {
+        "title": "中環意大利菜晚餐",
+        "steps": [
+          {
+            "location": "中環地鐵站B出口",
+            "activity": "會合",
+            "narration": "柒頭與Mira在中環地鐵站B出口碰頭，準備前往餐廳。",
+            "leader": "together"
+          },
+          {
+            "location": "中環意大利餐廳",
+            "activity": "用餐及飲嘢",
+            "narration": "雙方抵達中環的意大利菜餐廳，享用意粉並由柒頭請客飲嘢。",
+            "leader": "user"
+          }
+        ],
+        "id": "381929e7-6219-4fb4-adf9-9d4b94443ee6"
+      },
+      "stepIndex": 1,
+      "completedTurns": 1
+    },
+    "dismissedTitles": []
+  },
+  "messages": [
+    {
+      "id": "d4411f1c-f1a7-469c-94ac-81d4fb1bfcda:assistant:0",
+      "turnId": "d4411f1c-f1a7-469c-94ac-81d4fb1bfcda",
+      "role": "assistant",
+      "text": "低B妹？ 你個柒頭真係有種，敢咁同我講嘢。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "d4411f1c-f1a7-469c-94ac-81d4fb1bfcda:assistant:1",
+      "turnId": "d4411f1c-f1a7-469c-94ac-81d4fb1bfcda",
+      "role": "assistant",
+      "text": "既然你咁急住帶路，咁就快啲啦，唔好俾人等。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "e06c807e-592e-4320-98d1-730375db500b:user:0",
+      "turnId": "e06c807e-592e-4320-98d1-730375db500b",
+      "role": "user",
+      "text": "我地去邊度等先？",
+      "generated": true
+    },
+    {
+      "id": "e06c807e-592e-4320-98d1-730375db500b:assistant:0",
+      "turnId": "e06c807e-592e-4320-98d1-730375db500b",
+      "role": "assistant",
+      "text": "行啦柒頭，帶路啦！",
+      "personaName": "Mira"
+    },
+    {
+      "id": "e06c807e-592e-4320-98d1-730375db500b:assistant:1",
+      "turnId": "e06c807e-592e-4320-98d1-730375db500b",
+      "role": "assistant",
+      "text": "不過到咗要請我飲嘢㗎。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "e06c807e-592e-4320-98d1-730375db500b:assistant:2",
+      "turnId": "e06c807e-592e-4320-98d1-730375db500b",
+      "role": "assistant",
+      "text": "我渴緊喎。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "2261cb9c-f29e-4655-a0d7-4fb19bc071b5:user:0",
+      "turnId": "2261cb9c-f29e-4655-a0d7-4fb19bc071b5",
+      "role": "user",
+      "text": "我地去中環地鐵站B",
+      "generated": true
+    },
+    {
+      "id": "2261cb9c-f29e-4655-a0d7-4fb19bc071b5:assistant:0",
+      "turnId": "2261cb9c-f29e-4655-a0d7-4fb19bc071b5",
+      "role": "assistant",
+      "text": "B出口？ 柒頭你識路就快啲帶路啦，唔好令我等太久。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "2261cb9c-f29e-4655-a0d7-4fb19bc071b5:assistant:1",
+      "turnId": "2261cb9c-f29e-4655-a0d7-4fb19bc071b5",
+      "role": "assistant",
+      "text": "到咗先再話你知我信唔信你識路㗎。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "2c132d65-6e7d-4d87-a2a1-b8cf5f0d332a:user:0",
+      "turnId": "2c132d65-6e7d-4d87-a2a1-b8cf5f0d332a",
+      "role": "user",
+      "text": "好，我出發咯"
+    },
+    {
+      "id": "2c132d65-6e7d-4d87-a2a1-b8cf5f0d332a:assistant:0",
+      "turnId": "2c132d65-6e7d-4d87-a2a1-b8cf5f0d332a",
+      "role": "assistant",
+      "text": "行！柒頭你帶路啦，唔好又話我識路又話我唔識路。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "2c132d65-6e7d-4d87-a2a1-b8cf5f0d332a:assistant:1",
+      "turnId": "2c132d65-6e7d-4d87-a2a1-b8cf5f0d332a",
+      "role": "assistant",
+      "text": "到咗中環記得請我飲杯嘢，我口渴緊。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "381929e7-6219-4fb4-adf9-9d4b94443ee6:0",
+      "role": "scene",
+      "text": "柒頭與Mira在中環地鐵站B出口碰頭，準備前往餐廳。",
+      "sceneStep": {
+        "location": "中環地鐵站B出口",
+        "activity": "會合",
+        "narration": "柒頭與Mira在中環地鐵站B出口碰頭，準備前往餐廳。",
+        "leader": "together"
+      }
+    },
+    {
+      "id": "be2a1109-5375-43bb-8f12-adec2c8b085e:user:0",
+      "turnId": "be2a1109-5375-43bb-8f12-adec2c8b085e",
+      "role": "user",
+      "text": "放心啦，柒頭識路㗎",
+      "generated": true
+    },
+    {
+      "id": "be2a1109-5375-43bb-8f12-adec2c8b085e:user:1",
+      "turnId": "be2a1109-5375-43bb-8f12-adec2c8b085e",
+      "role": "user",
+      "text": "你喺度等緊啦",
+      "generated": true
+    },
+    {
+      "id": "be2a1109-5375-43bb-8f12-adec2c8b085e:user:2",
+      "turnId": "be2a1109-5375-43bb-8f12-adec2c8b085e",
+      "role": "user",
+      "text": "唔好咁急住催命",
+      "generated": true
+    },
+    {
+      "id": "be2a1109-5375-43bb-8f12-adec2c8b085e:user:3",
+      "turnId": "be2a1109-5375-43bb-8f12-adec2c8b085e",
+      "role": "user",
+      "text": "我帶住杯凍檸茶俾你",
+      "generated": true
+    },
+    {
+      "id": "be2a1109-5375-43bb-8f12-adec2c8b085e:assistant:0",
+      "turnId": "be2a1109-5375-43bb-8f12-adec2c8b085e",
+      "role": "assistant",
+      "text": "凍檸茶？ 柒頭你終於識得關心人啦， 唔係每次都咁戇鳩。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "be2a1109-5375-43bb-8f12-adec2c8b085e:assistant:1",
+      "turnId": "be2a1109-5375-43bb-8f12-adec2c8b085e",
+      "role": "assistant",
+      "text": "行啦， 既然你帶住嘢， 我就唔催命你啦。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "be2a1109-5375-43bb-8f12-adec2c8b085e:assistant:2",
+      "turnId": "be2a1109-5375-43bb-8f12-adec2c8b085e",
+      "role": "assistant",
+      "text": "不過到咗餐廳， 你要請我食多啲嘢補回呀， 柒頭。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "fdd3030d-ca3a-48be-b033-d513e6ee9ed8:user:0",
+      "turnId": "fdd3030d-ca3a-48be-b033-d513e6ee9ed8",
+      "role": "user",
+      "text": "凍檸茶就當係見面禮啦",
+      "generated": true
+    },
+    {
+      "id": "fdd3030d-ca3a-48be-b033-d513e6ee9ed8:user:1",
+      "turnId": "fdd3030d-ca3a-48be-b033-d513e6ee9ed8",
+      "role": "user",
+      "text": "食咗餐飯先補返你",
+      "generated": true
+    },
+    {
+      "id": "fdd3030d-ca3a-48be-b033-d513e6ee9ed8:user:2",
+      "turnId": "fdd3030d-ca3a-48be-b033-d513e6ee9ed8",
+      "role": "user",
+      "text": "柒頭帶路，跟住落車就啱喇",
+      "generated": true
+    },
+    {
+      "id": "fdd3030d-ca3a-48be-b033-d513e6ee9ed8:assistant:0",
+      "turnId": "fdd3030d-ca3a-48be-b033-d513e6ee9ed8",
+      "role": "assistant",
+      "text": "凍檸茶？ 柒頭你終於識得關心人啦。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "fdd3030d-ca3a-48be-b033-d513e6ee9ed8:assistant:1",
+      "turnId": "fdd3030d-ca3a-48be-b033-d513e6ee9ed8",
+      "role": "assistant",
+      "text": "行啦，跟住落車啦。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "381929e7-6219-4fb4-adf9-9d4b94443ee6:1",
+      "role": "scene",
+      "text": "雙方抵達中環的意大利菜餐廳，享用意粉並由柒頭請客飲嘢。",
+      "sceneStep": {
+        "location": "中環意大利餐廳",
+        "activity": "用餐及飲嘢",
+        "narration": "雙方抵達中環的意大利菜餐廳，享用意粉並由柒頭請客飲嘢。",
+        "leader": "user"
+      }
+    },
+    {
+      "id": "2f524955-36f6-4ea7-b910-4b6255755ba6:user:0",
+      "turnId": "2f524955-36f6-4ea7-b910-4b6255755ba6",
+      "role": "user",
+      "text": "柒頭你識路定係我識路？",
+      "generated": true
+    },
+    {
+      "id": "2f524955-36f6-4ea7-b910-4b6255755ba6:user:1",
+      "turnId": "2f524955-36f6-4ea7-b910-4b6255755ba6",
+      "role": "user",
+      "text": "跟住落車啦，唔好磨嘢。",
+      "generated": true
+    },
+    {
+      "id": "2f524955-36f6-4ea7-b910-4b6255755ba6:user:2",
+      "turnId": "2f524955-36f6-4ea7-b910-4b6255755ba6",
+      "role": "user",
+      "text": "到咗餐廳再慢慢計。",
+      "generated": true
+    },
+    {
+      "id": "2f524955-36f6-4ea7-b910-4b6255755ba6:assistant:0",
+      "turnId": "2f524955-36f6-4ea7-b910-4b6255755ba6",
+      "role": "assistant",
+      "text": "柒頭你識路定係我識路？ 你咪又係咁自信呀，仆街。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "2f524955-36f6-4ea7-b910-4b6255755ba6:assistant:1",
+      "turnId": "2f524955-36f6-4ea7-b910-4b6255755ba6",
+      "role": "assistant",
+      "text": "跟住落車啦，唔好磨嘢，凍檸茶我收低先。",
+      "personaName": "Mira"
+    },
+    {
+      "id": "2f524955-36f6-4ea7-b910-4b6255755ba6:assistant:2",
+      "turnId": "2f524955-36f6-4ea7-b910-4b6255755ba6",
+      "role": "assistant",
+      "text": "到咗餐廳再慢慢計，我餓緊啦。",
+      "personaName": "Mira"
+    }
+  ]
+}

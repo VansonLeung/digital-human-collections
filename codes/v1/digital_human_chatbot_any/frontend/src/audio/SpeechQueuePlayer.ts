@@ -1,6 +1,7 @@
 import type { ServerEvent } from '@digital-human/shared';
 import type { Shape } from '../avatars/types';
 import { AmplitudeEnvelope } from './amplitude';
+import type { PerformancePlayback } from '../performance/events';
 
 type SpeechReady = Extract<ServerEvent, { type: 'speech.ready' }>;
 
@@ -14,6 +15,7 @@ type Callbacks = {
   phraseTime: (seconds: number) => void;
   ended: () => void;
   failed: (error: Error) => void;
+  playbackState?: (state: PerformancePlayback) => void;
 };
 
 type ScheduledPhrase = {
@@ -43,6 +45,7 @@ export class SpeechQueuePlayer {
   private frame = 0;
   private lastTime = 0;
   private callbacks?: Callbacks;
+  private playbackState?: PerformancePlayback;
 
   paused = false;
   muted = false;
@@ -67,9 +70,16 @@ export class SpeechQueuePlayer {
     await this.context.resume();
   }
 
+  private notifyPlayback(state: PerformancePlayback) {
+    if (this.playbackState === state) return;
+    this.playbackState = state;
+    this.callbacks?.playbackState?.(state);
+  }
+
   begin(callbacks: Callbacks) {
     this.stop();
     this.callbacks = callbacks;
+    this.notifyPlayback('buffering');
     this.active = true;
     this.controller = new AbortController();
   }
@@ -178,9 +188,13 @@ export class SpeechQueuePlayer {
     }
 
     if (!entry || this.paused || this.context.state !== 'running') {
+      this.notifyPlayback(
+        this.paused || this.context.state === 'suspended' ? 'paused' : 'buffering',
+      );
       this.clearMouth();
       this.speaking(false);
     } else {
+      this.notifyPlayback('playing');
       this.speaking(true);
       const position = time - entry.start;
       this.callbacks?.phraseTime(position);
@@ -207,6 +221,7 @@ export class SpeechQueuePlayer {
     this.frame = 0;
     this.clearMouth();
     this.speaking(false);
+    this.notifyPlayback('ended');
     this.callbacks?.ended();
   }
 
@@ -226,6 +241,7 @@ export class SpeechQueuePlayer {
     if (this.paused) await this.context.resume();
     else await this.context.suspend();
     this.paused = !this.paused;
+    this.notifyPlayback(this.paused ? 'paused' : 'playing');
     if (this.paused) {
       this.clearMouth();
       this.speaking(false);
@@ -238,6 +254,7 @@ export class SpeechQueuePlayer {
   }
 
   stop() {
+    this.notifyPlayback('stopped');
     this.generation++;
     this.active = false;
     this.controller.abort();

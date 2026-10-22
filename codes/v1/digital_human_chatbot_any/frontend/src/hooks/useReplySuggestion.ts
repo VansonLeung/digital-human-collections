@@ -39,7 +39,10 @@ export function useReplySuggestion(
     options.virtualScenesEnabled,
     options.autoEnterScenes,
     options.autoRecoverStalls,
+    options.naturalVariation,
     options.aboutMe,
+    options.miraBehavior,
+    options.miraAngryHopEnabled,
     options.revision,
     options.blocked,
   ]);
@@ -68,7 +71,10 @@ export function useReplySuggestion(
           virtualScenesEnabled: snapshot.virtualScenesEnabled,
           autoEnterScenes: snapshot.autoEnterScenes,
           autoRecoverStalls: snapshot.autoRecoverStalls,
+          naturalVariation: snapshot.naturalVariation,
           aboutMe: snapshot.aboutMe,
+          miraBehavior: snapshot.miraBehavior,
+          miraAngryHopEnabled: snapshot.miraAngryHopEnabled,
         }),
         signal: controller.signal,
       });

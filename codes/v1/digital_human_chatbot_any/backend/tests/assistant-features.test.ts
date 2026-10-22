@@ -52,7 +52,7 @@ test('phrase display streams validated phrases and keeps assistant history plain
           assert.equal(options?.conversationalPhrases, true);
           assert.equal(options?.localizedProfanity, true);
           assert.equal(options?.getToKnowEachOther, true);
-          assert.equal(options?.aboutMe, 'I like walks.');
+          assert.equal(options?.aboutMe, undefined);
           const raw = JSON.stringify(
             phrases.map((phrase) => ({ phrase, emotion: 'neutral', gestures: [] })),
           );
@@ -250,6 +250,111 @@ async function fixture() {
   };
 }
 
+test('conversation progress commits after successful completion, not before playback or after Stop', async () => {
+  for (const outcome of ['text', 'played', 'stopped']) {
+    const f = await fixture();
+    try {
+      const raw = JSON.stringify([
+        {
+          phrase: 'Let us go.',
+          emotion: 'happy',
+          gestures: [],
+          conversationProgress: {
+            topic: 'dessert',
+            angle: 'outing',
+            kind: 'decision',
+            summary: 'Agree to go',
+            quote: 'Let us go.',
+          },
+        },
+      ]);
+      await runTurn(
+        f.config,
+        f.session,
+        { ...command, speech: outcome !== 'text' },
+        [persona],
+        f.media,
+        {
+          answer: async (_c, _h, _l, delta) => {
+            delta(raw);
+            return raw;
+          },
+          synthesize: async () => ({ bytes: Buffer.from('wav'), duration: 0.1 }),
+          mouthCues: async () => [],
+        },
+      );
+      if (outcome !== 'text') {
+        assert.equal(f.session.progress.context(), '');
+        assert.ok(f.session.active?.succeeded);
+        if (outcome === 'played') f.session.finish(f.session.active!);
+        else f.session.stop();
+      }
+      assert.equal(f.session.progress.context().includes('dessert'), outcome !== 'stopped');
+      assert.ok(
+        !f.session.history.some((message) => message.content.includes('conversationProgress')),
+      );
+    } finally {
+      await f.close();
+    }
+  }
+});
+
+test('reaction controls reach audio unchanged, cooldown filters the next three completed replies and inspector retains both decisions', async () => {
+  const f = await fixture();
+  try {
+    for (let index = 0; index < 5; index++) {
+      await runTurn(
+        f.config,
+        f.session,
+        {
+          ...command,
+          text: `Playful turn ${index}`,
+          speech: true,
+          miraBehavior: 'Mira reacts with playful embarrassed anger.',
+          miraAngryHopEnabled: true,
+        },
+        [persona],
+        f.media,
+        {
+          answer: async (_c, _h, _l, delta, _s, options) => {
+            assert.equal(options?.angryHopCooldown, [0, 3, 2, 1, 0][index]);
+            assert.match(options?.miraBehavior ?? '', /embarrassed/);
+            const raw = JSON.stringify([
+              {
+                phrase: `A playful response ${index}.`,
+                emotion: 'angry',
+                gestures: [],
+                reaction: { name: 'flustered_denial', intensity: 0.85 },
+              },
+            ]);
+            delta(raw);
+            return raw;
+          },
+          synthesize: async () => ({ bytes: Buffer.from('wav'), duration: 0.2 }),
+          mouthCues: async () => [],
+        },
+      );
+      const selected = f.events.filter((event) => event.type === 'performance.phrase').at(-1)!;
+      assert.equal(selected.type, 'performance.phrase');
+      if (selected.type !== 'performance.phrase') throw new Error('Missing inspector controls');
+      assert.equal(selected.selected.reaction?.name, 'flustered_denial');
+      assert.deepEqual(selected.selected.gestures, []);
+      assert.equal(
+        selected.applied.gestures[0].name,
+        index === 0 || index === 4 ? 'angry_hop' : 'tsundere_turn',
+      );
+      assert.equal(selected.decision, index === 0 || index === 4 ? 'reaction_mapped' : 'cooldown');
+      const audio = f.events.filter((event) => event.type === 'speech.ready').at(-1)!;
+      assert.ok(audio.type === 'speech.ready');
+      assert.deepEqual(audio.performance, selected.applied);
+      assert.equal(f.session.reactions.remaining, index === 0 ? 0 : [0, 3, 2, 1, 0][index]);
+      f.session.finish(f.session.active!);
+    }
+  } finally {
+    await f.close();
+  }
+});
+
 test('format failure retains the entire streamed raw output, validation details, finish reason and disk artifact', async () => {
   const f = await fixture();
   const raw =
@@ -334,7 +439,7 @@ test('proactive replies require opt-in, idle time and current history; only one 
       calls++;
       assert.equal(options?.proactive, true);
       assert.equal(options?.getToKnowEachOther, true);
-      assert.equal(options?.aboutMe, 'I like tea.');
+      assert.equal(options?.aboutMe, undefined);
       assert.equal(options?.localizedProfanity, true);
       assert.deepEqual(history, [
         { role: 'user', content: 'Hello' },
@@ -645,11 +750,13 @@ test('suggested replies stay outside history and diagnostic downloads are scoped
     const response = await request(true, {
       getToKnowEachOther: true,
       aboutMe: 'I like quiet walks.',
+      miraBehavior: 'MIRA_PRIVATE_SECRET_93: fond of bluebells.',
     });
     assert.equal(response.status, 200);
     assert.match(sentBody.messages.at(-1).content, /LOCALIZED PROFANITY MODE: ON/);
     assert.match(sentBody.messages.at(-1).content, /CONVERSATION FOCUS: GET TO KNOW EACH OTHER/);
     assert.match(sentBody.messages.at(-1).content, /I like quiet walks/);
+    assert.ok(!JSON.stringify(sentBody).includes('MIRA_PRIVATE_SECRET_93'));
     assert.equal((await request(false, { aboutMe: 'x'.repeat(2001) })).status, 422);
     assert.deepEqual(await response.json(), { draft: 'Tell me more about that.', revision: 0 });
     assert.equal(session.history.length, 2);

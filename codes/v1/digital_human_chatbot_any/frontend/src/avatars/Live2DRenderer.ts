@@ -1,3 +1,4 @@
+import type { PerformancePlayback, PoseActionEvent } from '../performance/events';
 import * as PIXI from 'pixi.js';
 import type { AvatarRenderer, Shape } from './types';
 import { openness } from './types';
@@ -112,6 +113,13 @@ export class Live2DRenderer implements AvatarRenderer {
       (gesture) => gesture.name === 'nod' || gesture.name === 'shake_head',
     );
     this.performance.beginPhrase({ ...value, gestures }, duration);
+  }
+
+  setPlaybackState(state: PerformancePlayback) {
+    this.performance.setPlaybackState(state);
+  }
+  setPerformanceObserver(observer: (event: PoseActionEvent) => void) {
+    this.performance.setPerformanceObserver(observer);
   }
 
   setPlaybackTime(seconds: number) {

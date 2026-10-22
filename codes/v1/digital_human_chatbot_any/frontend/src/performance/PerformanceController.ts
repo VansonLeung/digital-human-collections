@@ -3,6 +3,7 @@ import { TalkingPerformance } from './idleMotion';
 import { gesturePose } from './gestureLibrary';
 import { composePose, rotation, type PerformancePose } from './poseComposer';
 import { PoseController } from './PoseController';
+import type { PerformancePlayback, PoseActionEvent } from './events';
 
 /** Combines idle motion and phrase instructions independently of any avatar SDK. */
 export class PerformanceController {
@@ -27,12 +28,19 @@ export class PerformanceController {
     this.duration = duration;
     this.elapsed = 0;
     this.idle.setEmotion(phrase.emotion);
-    this.poses.beginPhrase(phrase.gestures);
+    this.poses.beginPhrase(phrase.gestures, duration);
   }
 
   setPlaybackTime(seconds: number) {
     this.elapsed = Math.max(0, seconds);
     this.poses.playbackTime(seconds);
+  }
+
+  setPlaybackState(state: PerformancePlayback) {
+    this.poses.setPlaybackState(state);
+  }
+  setPerformanceObserver(observer: (event: PoseActionEvent) => void) {
+    this.poses.observe = observer;
   }
 
   previewPose(name: PoseName, strength: number, holdSeconds: number) {

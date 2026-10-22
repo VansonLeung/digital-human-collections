@@ -68,7 +68,7 @@ test('English recycled passages are detected even when taken from different turn
   assert.equal(repeatedReply(`${second} ${first}`, history)?.passages, 2);
 });
 
-test('recovery shortens request context without changing history, preserves profiles and replaces topic-preservation pressure', () => {
+test('recovery shortens request context without changing history, preserves private ownership and replaces topic-preservation pressure', () => {
   const loop =
     'We will keep following this exact same path and discussing the same dessert tomorrow.';
   const history: ChatMessage[] = [
@@ -104,7 +104,13 @@ test('recovery shortens request context without changing history, preserves prof
     recoveryStage: 'fresh',
     aboutMe: 'My name is Ming.',
   });
-  assert.match(JSON.stringify(fresh), /My name is Ming/);
+  assert.doesNotMatch(JSON.stringify(fresh), /My name is Ming/);
+  assert.match(
+    JSON.stringify(
+      buildDraftMessages(history, 'yue', { recoveryStage: 'fresh', aboutMe: 'My name is Ming.' }),
+    ),
+    /My name is Ming/,
+  );
   assert.ok(!JSON.stringify(fresh).includes(loop));
   assert.deepEqual(history, original);
 });

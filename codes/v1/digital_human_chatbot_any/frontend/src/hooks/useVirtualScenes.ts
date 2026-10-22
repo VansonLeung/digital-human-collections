@@ -86,6 +86,8 @@ export function useVirtualScenes(options: {
       options.autoBlocked ||
       !options.connected ||
       !scene?.proposal ||
+      scene.agreement?.proposalId !== scene.proposal.id ||
+      scene.agreement.timing !== 'now' ||
       pending ||
       !scene.enabled ||
       document.hidden

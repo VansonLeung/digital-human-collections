@@ -113,6 +113,7 @@ test('manual rewriting preserves source instructions and automatic phrases reuse
       localizedProfanity: true,
       getToKnowEachOther: true,
       aboutMe: 'I like quiet walks.',
+      miraBehavior: 'MIRA_ONLY_SECRET_82: loves peach tea.',
     });
     assert.equal(manual.status, 200);
     assert.equal((await manual.json()).phrases.length, 2);
@@ -132,6 +133,7 @@ test('manual rewriting preserves source instructions and automatic phrases reuse
       localizedProfanity: true,
       getToKnowEachOther: true,
       aboutMe: 'I like quiet walks.',
+      miraBehavior: 'MIRA_ONLY_SECRET_82: loves peach tea.',
     });
     assert.equal(automatic.status, 200);
     const messages = f.requests.at(-1).messages;
@@ -140,6 +142,7 @@ test('manual rewriting preserves source instructions and automatic phrases reuse
     assert.match(messages.at(-1).content, /LOCALIZED PROFANITY MODE: ON/);
     assert.match(messages.at(-1).content, /CONVERSATION FOCUS: GET TO KNOW EACH OTHER/);
     assert.match(messages.at(-1).content, /I like quiet walks/);
+    assert.ok(!JSON.stringify(messages).includes('MIRA_ONLY_SECRET_82'));
     assert.match(messages.at(-1).content, /「屌」、「撚」/);
     const clean = await f.post('prepare', { kind: 'automatic' });
     assert.equal(clean.status, 200);

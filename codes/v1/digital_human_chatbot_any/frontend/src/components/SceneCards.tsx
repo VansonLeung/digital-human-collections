@@ -21,9 +21,7 @@ export function SceneStatus({ scene }: { scene?: SceneSnapshot }) {
   return (
     <div className="scene-status" aria-label="Current virtual scene">
       {step.location} · {step.activity}
-      <span>
-        {active.stepIndex + 1}/{active.plan.steps.length}
-      </span>
+      <span>Stage {(active.stepOffset ?? 0) + active.stepIndex + 1} · ongoing</span>
     </div>
   );
 }
@@ -43,6 +41,13 @@ export function SceneProposalCard({
     <div className="scene-proposal-card">
       <span className="scene-card-label">Suggested virtual scene · 情境建議</span>
       <strong>{proposal.title}</strong>
+      <p className="settings-hint">
+        {scene.agreement?.proposalId === proposal.id
+          ? scene.agreement.timing === 'later'
+            ? 'Agreed for later · 留待之後'
+            : 'Agreed to go now · 已同意出發'
+          : 'An invitation, awaiting agreement · 等待雙方同意'}
+      </p>
       <details>
         <summary>View scene steps</summary>
         <ol>

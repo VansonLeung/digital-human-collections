@@ -52,10 +52,13 @@ export class VrmRigAdapter implements AvatarRigAdapter {
       'leftFoot',
       'rightFoot',
     ];
-    for (const side of ['left', 'right'] as const)
+    for (const side of ['left', 'right'] as const) {
       for (const finger of ['Index', 'Middle', 'Ring', 'Little'] as const)
         for (const joint of ['Proximal', 'Intermediate', 'Distal'] as const)
           bones.push(`${side}${finger}${joint}`);
+      for (const joint of ['Metacarpal', 'Proximal', 'Distal'] as const)
+        bones.push(`${side}Thumb${joint}`);
+    }
     for (const name of bones) {
       const node = this.vrm.humanoid.getNormalizedBoneNode(name);
       if (node) this.body.set(name, { node, rest: node.rotation.clone() });

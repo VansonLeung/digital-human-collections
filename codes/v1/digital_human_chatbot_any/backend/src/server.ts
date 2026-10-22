@@ -43,6 +43,8 @@ server.on('upgrade', (request, socket, head) => {
       }
     });
     session.send({ type: 'session.ready' }, null);
+    session.send({ type: 'scene.state', scene: session.scene.snapshot() }, null);
+    session.send({ type: 'memory.state', memories: session.memory.snapshot() }, null);
     ws.on('message', (raw) => {
       try {
         const command = commandSchema.parse(JSON.parse(raw.toString()));
@@ -71,6 +73,18 @@ server.on('upgrade', (request, socket, head) => {
             });
             session.stop();
           });
+        } else if (command.type === 'memory.edit' || command.type === 'memory.forget') {
+          if (!session.editMemory(command))
+            session.send(
+              {
+                type: 'error',
+                stage: 'memory',
+                message:
+                  'The conversation changed or the memory no longer exists. Try again when the reply finishes.',
+                retryable: false,
+              },
+              null,
+            );
         } else if (command.type === 'scene.configure') {
           session.configureScenes(command.enabled);
         } else if (command.type === 'scene.decide') {
@@ -128,6 +142,17 @@ server.on('upgrade', (request, socket, head) => {
         session.suggestion?.abort();
         session.connection = undefined;
         session.attach(() => {});
+        // Each saved URL opens a fresh live session. Release closed sockets so
+        // browsing history does not exhaust the live-session limit.
+        void session.archive
+          .flush()
+          .then(async () => {
+            if (!session.connection && context.sessions.get(session.id) === session) {
+              context.sessions.delete(session.id);
+              await context.media.cleanup(session.id);
+            }
+          })
+          .catch(() => {});
       }
     };
     ws.on('close', disconnected);

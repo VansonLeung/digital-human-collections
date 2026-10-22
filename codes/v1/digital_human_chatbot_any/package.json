@@ -26,6 +26,8 @@
     "test:browser": "tsx scripts/browser-check.ts",
     "test:playback": "tsx scripts/playback-check.ts",
     "test:avatars": "tsx scripts/avatar-check.ts",
+    "import:conversation": "tsx scripts/import-conversation.ts",
+    "eval:reactions": "tsx scripts/reaction-eval.ts",
     "format": "prettier --write \"{backend/src,backend/tests,frontend/src,shared,scripts}/**/*.{ts,tsx,css}\" \"{.,backend,frontend,shared}/*.{json,ts}\" \"frontend/index.html\"",
     "format:check": "prettier --check \"{backend/src,backend/tests,frontend/src,shared,scripts}/**/*.{ts,tsx,css}\" \"{.,backend,frontend,shared}/*.{json,ts}\" \"frontend/index.html\"",
     "test:queue": "tsx scripts/queue-check.ts"

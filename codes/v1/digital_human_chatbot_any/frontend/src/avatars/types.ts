@@ -1,5 +1,6 @@
 import type { MouthCue } from '@digital-human/shared';
 import type { Emotion, GestureName, PhrasePerformance, PoseName } from '@digital-human/shared';
+import type { PerformancePlayback, PoseActionEvent } from '../performance/events';
 
 export type Shape = MouthCue['shape'];
 
@@ -12,6 +13,8 @@ export interface AvatarRenderer {
   setEmotion(value: Emotion): void;
   beginPhrase(value: PhrasePerformance, duration: number): void;
   setPlaybackTime(seconds: number): void;
+  setPlaybackState?(state: PerformancePlayback): void;
+  setPerformanceObserver?(observer: (event: PoseActionEvent) => void): void;
   previewPose?(name: PoseName, strength: number, holdSeconds: number): void;
   stopPose?(): void;
   setPoseHoldSeconds?(seconds: number): void;
