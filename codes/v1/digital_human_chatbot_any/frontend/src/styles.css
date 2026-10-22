@@ -1149,3 +1149,58 @@ button {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+.scene-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 26px;
+  background: #f5f0f7;
+  color: #766380;
+  font-size: 12px;
+}
+.scene-event-card,
+.scene-proposal-card {
+  margin: 10px 0 18px;
+  padding: 12px 15px;
+  border: 1px solid #e3d8e8;
+  border-radius: 12px;
+  background: #f8f5fa;
+  color: #65516f;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.scene-card-label {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: #93839b;
+}
+.scene-event-card p {
+  margin: 0 0 5px;
+}
+.scene-event-card small {
+  color: #93839b;
+}
+.scene-proposal-card details {
+  margin-top: 8px;
+}
+.scene-proposal-card summary {
+  cursor: pointer;
+}
+.scene-proposal-card li {
+  margin-bottom: 5px;
+}
+.scene-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.scene-actions button {
+  border-radius: 7px;
+  padding: 7px 10px;
+  background: #ece3f1;
+  color: #70577e;
+}

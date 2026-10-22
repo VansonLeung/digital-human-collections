@@ -16,6 +16,9 @@ const history: ChatMessage[] = [
 test('conversation preferences accept older callers, preserve editing spaces, and bound profile data', () => {
   assert.deepEqual(conversationPreferencesSchema.parse({}), {
     getToKnowEachOther: false,
+    virtualScenesEnabled: false,
+    autoEnterScenes: false,
+    autoRecoverStalls: true,
     aboutMe: '',
   });
   assert.equal(conversationPreferencesSchema.parse({ aboutMe: 'I like ' }).aboutMe, 'I like ');

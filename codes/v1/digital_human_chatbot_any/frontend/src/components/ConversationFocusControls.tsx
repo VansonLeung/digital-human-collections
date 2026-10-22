@@ -3,18 +3,69 @@ import { aboutMeMaxLength, type ConversationPreferences } from '@digital-human/s
 type Props = ConversationPreferences & {
   disabled: boolean;
   onFocusChange: (value: boolean) => void;
+  onScenesChange: (value: boolean) => void;
+  onAutoEnterChange: (value: boolean) => void;
+  onRecoveryChange: (value: boolean) => void;
   onAboutMeChange: (value: string) => void;
 };
 
 export function ConversationFocusControls({
   getToKnowEachOther,
+  virtualScenesEnabled,
+  autoEnterScenes,
+  autoRecoverStalls,
   aboutMe,
   disabled,
   onFocusChange,
+  onScenesChange,
+  onAutoEnterChange,
+  onRecoveryChange,
   onAboutMeChange,
 }: Props) {
   return (
     <>
+      <label className="conversation-toggle">
+        <input
+          type="checkbox"
+          aria-label="Virtual scenes"
+          checked={virtualScenesEnabled}
+          disabled={disabled}
+          onChange={(event) => onScenesChange(event.target.checked)}
+        />
+        Virtual scenes · 情境推進
+      </label>
+      <p className="settings-hint">
+        Small steps advance after two completed Mira replies. Chat continues while a suggestion is
+        pending. Scene cards carry the narration; voices speak only dialogue.
+      </p>
+      <label className="conversation-toggle">
+        <input
+          type="checkbox"
+          aria-label="Automatically enter suggested scenes"
+          checked={autoEnterScenes}
+          disabled={disabled || !virtualScenesEnabled}
+          onChange={(event) => onAutoEnterChange(event.target.checked)}
+        />
+        Automatically enter suggested scenes · 自動開始情境
+      </label>
+      <p className="settings-hint">
+        Start a valid proposal after Mira finishes speaking or displaying her phrases. Off means you
+        choose when to start.
+      </p>
+      <label className="conversation-toggle">
+        <input
+          type="checkbox"
+          aria-label="Automatically recover stalled conversations"
+          checked={autoRecoverStalls}
+          disabled={disabled}
+          onChange={(event) => onRecoveryChange(event.target.checked)}
+        />
+        Automatically recover stalled conversations · 自動打破重複
+      </label>
+      <p className="settings-hint">
+        If the normal retry still repeats dialogue, try a related angle, then a fresh topic. Pause
+        if both fail. The automatic turn limit still applies.
+      </p>
       <label className="conversation-toggle">
         <input
           type="checkbox"

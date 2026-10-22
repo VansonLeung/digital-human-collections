@@ -55,6 +55,36 @@ let maleConfigured = true;
 let failMaleSpeech = false;
 const suggestedDraft = 'Tell me more about that.';
 const proactiveQuestion = 'Would you like to explore something else?';
+const secondProactiveQuestion = 'How is that idea sitting with you now?';
+const repeatedAutomaticLine =
+  'We will keep following the same path and discussing this exact same dessert again later.';
+const scenePlan = {
+  title: 'A quiet dessert outing',
+  steps: [
+    {
+      location: 'On the way',
+      activity: 'Walking',
+      narration: 'Mira leads the way to a small dessert shop.',
+      leader: 'mira',
+    },
+    {
+      location: 'Dessert shop',
+      activity: 'Choosing dessert',
+      narration: 'They arrive and sit down with the menu.',
+      leader: 'together',
+    },
+    {
+      location: 'Dessert shop',
+      activity: 'Tasting dessert',
+      narration: 'Dessert arrives at the table.',
+      leader: 'together',
+    },
+  ],
+};
+let forceRepeatedAutomatic = false;
+let recoverAutomaticAt: 'related' | 'fresh' | undefined;
+let automaticMiraCalls = 0;
+let automaticSpokenCalls = 0;
 const brokenReply =
   '[{"emotion":"angry","gestures":[]},{"phrase":"This complete trailing fragment belongs in diagnostics.","emotion":"neutral","gestures":[]}]';
 let proactiveCalls = 0;
@@ -103,9 +133,10 @@ const mock = createServer(async (req, res) => {
         ['system', 'user'],
       );
       const transcript = JSON.parse(finalContent.split('\n')[1]);
-      assert.equal(transcript.at(-1)?.speaker, 'Mira');
+      if (!finalContent.includes('CONVERSATION RECOVERY:'))
+        assert.equal(transcript.at(-1)?.speaker, 'Mira');
       assert.match(finalContent, /Current speaker: the user talking to Mira/);
-      assert.match(finalContent, /do not echo, closely paraphrase/);
+      assert.match(finalContent, /do not echo, closely paraphrase|Do not echo a phrase/);
       draftCalls++;
       assert.equal(input.messages.at(-1).role, 'user');
       assert.match(input.messages.at(-1).content, /suggested next message/);
@@ -117,12 +148,18 @@ const mock = createServer(async (req, res) => {
       assert.equal(input.messages.at(-1).role, 'user');
       assert.match(input.messages.at(-1).content, /user is quiet/);
     }
-    const reply = isSpoken
+    let reply = isSpoken
       ? JSON.stringify({ phrases: ['First spoken phrase.', 'Second spoken phrase.'] })
       : isDraft
         ? JSON.stringify({ draft: suggestedDraft })
         : isProactive
-          ? JSON.stringify([{ phrase: proactiveQuestion, emotion: 'thoughtful', gestures: [] }])
+          ? JSON.stringify([
+              {
+                phrase: proactiveCalls === 1 ? proactiveQuestion : secondProactiveQuestion,
+                emotion: 'thoughtful',
+                gestures: [],
+              },
+            ])
           : text === 'pose-reply'
             ? JSON.stringify([
                 {
@@ -160,6 +197,61 @@ const mock = createServer(async (req, res) => {
                       gestures: [{ name: 'nod', strength: 0.5 }],
                     },
                   ]);
+    if (isDraft && isSpoken && ++automaticSpokenCalls > 1)
+      reply = JSON.stringify({
+        phrases: ['The evening has been peaceful.', 'I would like to hear your thoughts.'],
+      });
+    if (
+      !isDraft &&
+      !isProactive &&
+      finalContent.includes('The latest user message was automatically generated.')
+    ) {
+      automaticMiraCalls++;
+      reply = JSON.stringify([
+        {
+          phrase: forceRepeatedAutomatic
+            ? recoverAutomaticAt &&
+              finalContent.includes(
+                recoverAutomaticAt === 'related' ? 'RELATED ANGLE' : 'FRESH TOPIC',
+              )
+              ? 'A quiet evening could use a little music.'
+              : repeatedAutomaticLine
+            : ['Thanks for sharing.', 'That makes sense.', 'I am listening.'][
+                automaticMiraCalls % 3
+              ],
+          emotion: 'neutral',
+          gestures: [],
+        },
+      ]);
+    }
+    if (text === 'repeat-seed')
+      reply = JSON.stringify([{ phrase: repeatedAutomaticLine, emotion: 'neutral', gestures: [] }]);
+    if (text.startsWith('scene-')) {
+      const proposal =
+        text === 'scene-offer'
+          ? scenePlan
+          : text === 'scene-major-change'
+            ? { ...scenePlan, title: 'A garden visit' }
+            : undefined;
+      const phrase =
+        text === 'scene-offer'
+          ? 'We could visit a quiet dessert shop.'
+          : text === 'scene-major-change'
+            ? 'Would you like a garden visit after dessert?'
+            : text === 'scene-arrive'
+              ? 'The menu is here; we have arrived.'
+              : 'I can see a quiet table near the window.';
+      reply = JSON.stringify([
+        {
+          phrase,
+          emotion: 'happy',
+          gestures: [],
+          ...(proposal && finalContent.includes('VIRTUAL SCENE MODE')
+            ? { sceneProposal: proposal }
+            : {}),
+        },
+      ]);
+    }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     if (text === 'slow') await new Promise((r) => setTimeout(r, 1200));
     if (isDraft) await new Promise((resolve) => setTimeout(resolve, isSpoken ? 1200 : 500));
@@ -466,14 +558,10 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 1300));
   assert.equal(proactiveCalls, 1);
   await composer.fill('');
-  await page.waitForFunction(
-    (value) =>
-      [...document.querySelectorAll('.message.assistant .bubble')].filter(
-        (node) => node.textContent === value,
-      ).length === 2,
-    proactiveQuestion,
-    { timeout: 5000 },
-  );
+  await page
+    .locator('.message.assistant .bubble')
+    .filter({ hasText: secondProactiveQuestion })
+    .waitFor({ timeout: 5000 });
   assert.equal(proactiveCalls, 2);
   await composer.fill('slow');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
@@ -532,6 +620,18 @@ try {
   await page.getByText('Conversation settings', { exact: true }).click();
   const swearing = page.getByRole('checkbox', { name: 'Localized swearing', exact: true });
   assert.equal(await swearing.isChecked(), false);
+  const scenes = page.getByRole('checkbox', { name: 'Virtual scenes', exact: true });
+  assert.equal(await scenes.isChecked(), false);
+  const autoScenes = page.getByRole('checkbox', {
+    name: 'Automatically enter suggested scenes',
+    exact: true,
+  });
+  const recovery = page.getByRole('checkbox', {
+    name: 'Automatically recover stalled conversations',
+    exact: true,
+  });
+  assert.equal(await autoScenes.isChecked(), false);
+  assert.equal(await recovery.isChecked(), true);
   const focus = page.getByRole('checkbox', { name: 'Get to know each other', exact: true });
   const aboutMe = page.getByRole('textbox', { name: 'About me', exact: true });
   const profile = 'I enjoy quiet walks.\nI prefer tea after work.';
@@ -964,6 +1064,141 @@ try {
   await page.getByRole('button', { name: 'Reset settings', exact: true }).click();
   assert.equal(await manualMode.inputValue(), 'text');
   assert.equal(await autoMode.inputValue(), 'text');
+  // Virtual scenes are opt-in, major moves require a decision, and scene cards never become speech.
+  assert.equal(await scenes.isChecked(), false);
+  await scenes.check();
+  await page.getByText('Persona ready', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Start conversation', exact: true }).click();
+  await page.getByRole('button', { name: 'Introduce yourself', exact: true }).waitFor();
+  const ttsBeforeScene = ttsTexts.length;
+  await composer.fill('scene-offer');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.getByText('A quiet dessert outing', { exact: true }).waitFor();
+  assert.equal(await page.locator('.scene-event-card').count(), 0);
+  await page.getByRole('button', { name: 'Start this scene', exact: true }).click();
+  await page.locator('.scene-event-card').waitFor();
+  assert.deepEqual(ttsTexts.slice(ttsBeforeScene), ['We could visit a quiet dessert shop.']);
+  assert.ok(!ttsTexts.some((text) => scenePlan.steps.some((step) => step.narration === text)));
+  assert.match(await page.getByLabel('Current virtual scene').innerText(), /On the way/);
+  await page.locator('.speech-toggle').click();
+  const sendScene = async (text: string) => {
+    await composer.fill(text);
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await page.waitForFunction(
+      () =>
+        !(document.querySelector('[aria-label="Suggest reply"]') as HTMLButtonElement)?.disabled,
+    );
+  };
+  await sendScene('scene-first-turn');
+  await sendScene('scene-second-turn');
+  assert.equal(await page.locator('.scene-event-card').count(), 1);
+  await sendScene('scene-arrive');
+  assert.equal(await page.locator('.scene-event-card').count(), 2);
+  assert.match(await page.getByLabel('Current virtual scene').innerText(), /Dessert shop/);
+  assert.match(llmRequests.at(-1).messages.at(-1).content, /Leading: together/);
+  assert.match(llmRequests.at(-1).messages.at(-1).content, /Earlier steps are completed/);
+  await sendScene('scene-menu');
+  await sendScene('scene-dessert');
+  assert.equal(await page.locator('.scene-event-card').count(), 3);
+  await sendScene('scene-major-change');
+  await page.getByText('A garden visit', { exact: true }).waitFor();
+  assert.match(await page.getByLabel('Current virtual scene').innerText(), /Dessert shop/);
+  // Pending proposals do not stop the automatic dialogue or silently enter a scene.
+  await page.getByRole('spinbutton', { name: 'Auto reply delay seconds' }).fill('1');
+  await page.getByRole('spinbutton', { name: 'Auto reply turn limit' }).fill('1');
+  const automaticWhilePending = automaticMiraCalls;
+  await auto.check();
+  await page.waitForFunction(() =>
+    document.querySelector('.auto-reply-options')?.textContent?.includes('limit reached'),
+  );
+  assert.ok(automaticMiraCalls > automaticWhilePending);
+  assert.equal(await page.locator('.scene-proposal-card').count(), 1);
+  assert.equal(await page.locator('.scene-event-card').count(), 3);
+  assert.match(await page.getByLabel('Current virtual scene').innerText(), /Dessert shop/);
+  await auto.uncheck();
+  await page.getByRole('button', { name: 'Keep chatting', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.scene-proposal-card'));
+  await sendScene('scene-major-change');
+  assert.equal(
+    await page.locator('.scene-proposal-card').count(),
+    0,
+    'Dismissed scene proposals do not keep returning',
+  );
+  await page.screenshot({ path: path.join(qa, 'studio-virtual-scenes.png'), fullPage: true });
+  // Auto-entry waits for the spoken proposal to finish, then emits one scene card.
+  await page.getByRole('button', { name: 'Clear conversation', exact: true }).click();
+  await autoScenes.check();
+  await page.locator('.speech-toggle').click();
+  const beforeAutoEntry = sentCommands.length;
+  await composer.fill('scene-offer');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.getByText('A quiet dessert outing', { exact: true }).waitFor();
+  assert.equal(await page.locator('.scene-event-card').count(), 0);
+  await page.locator('.scene-event-card').waitFor({ timeout: 15000 });
+  const entryCommands = sentCommands.slice(beforeAutoEntry);
+  const playbackEnd = entryCommands.findIndex((item) => item.type === 'playback.ended');
+  const entry = entryCommands.findIndex((item) => item.type === 'scene.decide');
+  assert.ok(playbackEnd >= 0 && entry > playbackEnd);
+  assert.equal(entryCommands.filter((item) => item.type === 'scene.decide').length, 1);
+  assert.equal(await page.locator('.scene-proposal-card').count(), 0);
+  await page.locator('.speech-toggle').click();
+  await scenes.uncheck();
+  await sendScene('scene-mode-off');
+  assert.equal(await page.getByLabel('Current virtual scene').count(), 0);
+  assert.ok(!llmRequests.at(-1).messages.at(-1).content.includes('VIRTUAL SCENE MODE'));
+
+  // Successful bounded recovery stays in one Mira turn and does not pause automation.
+  await sendScene('repeat-seed');
+  forceRepeatedAutomatic = true;
+  recoverAutomaticAt = 'fresh';
+  const recoveryStart = automaticMiraCalls;
+  await page.getByRole('spinbutton', { name: 'Auto reply delay seconds' }).fill('1');
+  await page.getByRole('spinbutton', { name: 'Auto reply turn limit' }).fill('1');
+  await auto.check();
+  await page
+    .locator('.message.assistant .bubble')
+    .filter({ hasText: 'A quiet evening could use a little music.' })
+    .waitFor({ timeout: 12000 });
+  assert.equal(automaticMiraCalls - recoveryStart, 4);
+  await page.waitForFunction(() =>
+    document.querySelector('.auto-reply-options')?.textContent?.includes('limit reached'),
+  );
+  assert.equal(await page.getByRole('alert').count(), 0);
+  await auto.uncheck();
+  recoverAutomaticAt = undefined;
+  forceRepeatedAutomatic = false;
+  await page.getByRole('button', { name: 'Clear conversation', exact: true }).click();
+  // Exhausted recovery pauses after four attempts without rendering rejected copies.
+  await sendScene('repeat-seed');
+  await page.getByRole('spinbutton', { name: 'Auto reply delay seconds' }).fill('1');
+  await page.getByRole('spinbutton', { name: 'Auto reply turn limit' }).fill('1');
+  await auto.check();
+  forceRepeatedAutomatic = true;
+  const automaticBeforeRepeat = automaticMiraCalls;
+  await page
+    .getByRole('alert')
+    .filter({ hasText: 'related angle and a fresh topic' })
+    .waitFor({ timeout: 12000 });
+  assert.equal(automaticMiraCalls - automaticBeforeRepeat, 4);
+  assert.equal(
+    (await page.locator('.message.assistant .bubble').allTextContents()).filter(
+      (text) => text === repeatedAutomaticLine,
+    ).length,
+    1,
+  );
+  assert.match(await page.locator('.auto-reply-options').innerText(), /paused/);
+  forceRepeatedAutomatic = false;
+  await auto.uncheck();
+  await page.getByRole('button', { name: 'Clear conversation', exact: true }).click();
+  assert.equal(await page.locator('.scene-event-card').count(), 0);
+  await scenes.check();
+  await page.reload();
+  await page.getByText('Conversation settings', { exact: true }).click();
+  assert.equal(await scenes.isChecked(), true);
+  assert.equal(await autoScenes.isChecked(), true);
+  assert.equal(await recovery.isChecked(), true);
+  await page.getByRole('button', { name: 'Reset settings', exact: true }).click();
+  assert.equal(await scenes.isChecked(), false);
   await page.getByText('Conversation settings', { exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(
@@ -989,6 +1224,8 @@ try {
       'raw response and exact LLM request body can be inspected and downloaded without credentials',
       'phrase bubbles follow audio starts and pause; text pacing supports Stop; replay does not duplicate bubbles',
       'automatic draft-and-send loop obeys limits and yields to typing',
+      'automatic repetition recovery tries a related angle then a fresh topic and pauses only on exhaustion',
+      'chat continues while scene proposals are pending; opt-in automatic scene entry waits for playback',
       'manual spoken rewrite preview preserves original text and speaks edited phrases',
       'male voice phrase bubbles pause and commit exactly once after playback',
       'Stop retains the draft and prevents submission; missing male voice disables playback',
@@ -1005,6 +1242,9 @@ try {
       'Reset',
       'Cantonese text gate',
       'automatic Cantonese reply and English override',
+      'scene entry follows manual or saved automatic selection; completed dialogue advances cards with narration excluded from TTS',
+      'automatic duplicate dialogue uses bounded recovery before pausing, without rendering rejected attempts',
+      'scene toggle persists and resets; disabled scene mode omits scene prompts',
       'mobile layout',
     ],
     provider: 'local mock HTTP services; system-generated voice fixture',

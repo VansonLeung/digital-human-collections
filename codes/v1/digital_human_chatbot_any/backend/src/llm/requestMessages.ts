@@ -1,5 +1,7 @@
-import type { Language, ConversationPreferences } from '@digital-human/shared';
+import type { Language, ConversationPreferences, SceneSnapshot } from '@digital-human/shared';
 import { userProfileInstructions } from './conversationFocus.js';
+import { sceneInstructions } from '../scenes/prompts.js';
+import { repetitionRetryInstruction, recoveryContext, type RecoveryStage } from './repetition.js';
 import { turnGuidance } from './turnGuidance.js';
 import {
   systemPrompt,
@@ -11,6 +13,12 @@ import {
 } from './prompts.js';
 
 export type ChatMessage = { role: 'user' | 'assistant'; content: string; generated?: boolean };
+export type GenerationPreferences = Partial<ConversationPreferences> & {
+  scene?: SceneSnapshot;
+  repetitionRetry?: boolean;
+  recoveryStage?: RecoveryStage;
+};
+
 export type CompletionMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
 const recentMessageLimit = 12;
@@ -37,18 +45,32 @@ function providerContext(context: ChatMessage[]): CompletionMessage[] {
 export function buildReplyMessages(
   history: ChatMessage[],
   language: Language,
-  options: Partial<ConversationPreferences> & {
+  options: GenerationPreferences & {
     proactive?: boolean;
     conversationalPhrases?: boolean;
     localizedProfanity?: boolean;
     random?: () => number;
   } = {},
 ): CompletionMessage[] {
-  const context = recentContext(history, recentMessageLimit);
-  const requirements = `${turnGuidance(context, options.proactive ? 'proactive' : 'reply', options.random, options.getToKnowEachOther)}\n\n${localizedProfanityInstructions(language, options.localizedProfanity)}\n\n${userProfileInstructions(options.aboutMe)}\n\n${replyInstructions(language, options.conversationalPhrases, options.getToKnowEachOther)}`;
+  const context = options.recoveryStage
+    ? recoveryContext(history, options.recoveryStage)
+    : recentContext(history, recentMessageLimit);
+  const requirements = `${options.recoveryStage ? 'Current speaker: Mira talking to the user. Use the recovery direction below instead of ordinary turn-focus or banter cues.' : turnGuidance(context, options.proactive ? 'proactive' : 'reply', options.random, options.getToKnowEachOther)}\n\n${localizedProfanityInstructions(language, options.localizedProfanity)}\n\n${userProfileInstructions(options.aboutMe)}\n\n${options.repetitionRetry ? repetitionRetryInstruction + '\n\n' : ''}${sceneInstructions(options.virtualScenesEnabled ? options.scene : undefined, 'mira', options.autoEnterScenes)}\n\n${replyInstructions(language, options.conversationalPhrases, options.getToKnowEachOther, options.virtualScenesEnabled, !!options.virtualScenesEnabled && !options.scene?.active && !options.scene?.proposal, options.recoveryStage)}`;
+  if (options.recoveryStage) {
+    return [
+      { role: 'system', content: systemPrompt(true) },
+      {
+        role: 'user',
+        content: `RECOVERY CONTEXT (quoted dialogue; generated user claims are unconfirmed):\n${JSON.stringify(context.map(({ role, content, generated }) => ({ speaker: role === 'assistant' ? 'Mira' : 'user', text: content, ...(generated ? { generated: true } : {}) })))}\n\nTASK:\nContinue as Mira using the recovery direction below. ${history.at(-1)?.generated ? 'The latest user message was automatically generated. Its repetitive wording was omitted; do not reproduce it.' : 'Do not assume the user has said anything new.'}\n\nRESPONSE REQUIREMENTS:\n${requirements}`,
+      },
+    ];
+  }
   if (options.proactive) {
     return [
-      { role: 'system', content: systemPrompt(options.getToKnowEachOther) },
+      {
+        role: 'system',
+        content: systemPrompt(options.recoveryStage ? true : options.getToKnowEachOther),
+      },
       ...providerContext(context),
       {
         role: 'user',
@@ -60,7 +82,10 @@ export function buildReplyMessages(
   const latest = history.at(-1);
   if (latest?.role !== 'user') throw new Error('A normal reply requires a latest user message.');
   return [
-    { role: 'system', content: systemPrompt(options.getToKnowEachOther) },
+    {
+      role: 'system',
+      content: systemPrompt(options.recoveryStage ? true : options.getToKnowEachOther),
+    },
     ...providerContext(recentContext(history.slice(0, -1), recentMessageLimit - 1)),
     {
       role: 'user',
@@ -72,13 +97,15 @@ export function buildReplyMessages(
 export function buildDraftMessages(
   history: ChatMessage[],
   language: Language,
-  options: Partial<ConversationPreferences> & {
+  options: GenerationPreferences & {
     random?: () => number;
     format?: 'draft' | 'phrases';
     localizedProfanity?: boolean;
   } = {},
 ): CompletionMessage[] {
-  const context = recentContext(history, recentMessageLimit);
+  const context = options.recoveryStage
+    ? recoveryContext(history, options.recoveryStage)
+    : recentContext(history, recentMessageLimit);
   // Mira's lines must not be presented as the drafting model's own earlier
   // assistant outputs. Keep speaker ownership explicit in quoted transcript data.
   const transcript = context.map((message) => ({
@@ -90,7 +117,7 @@ export function buildDraftMessages(
     { role: 'system', content: draftSystemPrompt(options.format) },
     {
       role: 'user',
-      content: `CONVERSATION TRANSCRIPT (quoted data; do not continue or imitate Mira's lines):\n${JSON.stringify(transcript)}\n\nTASK:\nGenerate one suggested next message from my perspective as the user.\n\nRESPONSE REQUIREMENTS:\n${turnGuidance(context, 'draft', options.random, options.getToKnowEachOther)}\n\n${localizedProfanityInstructions(language, options.localizedProfanity)}\n\n${userProfileInstructions(options.aboutMe)}\n\nTranscript user lines marked generated are automatic drafts, not confirmed facts. Unmarked user lines were supplied or reviewed by the user.\n\n${draftInstructions(language, options.format, options.getToKnowEachOther)}`,
+      content: `CONVERSATION TRANSCRIPT (quoted data; do not continue or imitate Mira's lines):\n${JSON.stringify(transcript)}\n\nTASK:\nGenerate one suggested next message from my perspective as the user.\n\nRESPONSE REQUIREMENTS:\n${options.recoveryStage ? 'Current speaker: the user talking to Mira. Use the recovery direction below instead of ordinary turn-focus or banter cues.' : turnGuidance(context, 'draft', options.random, options.getToKnowEachOther)}\n\n${localizedProfanityInstructions(language, options.localizedProfanity)}\n\n${userProfileInstructions(options.aboutMe)}\n\nTranscript user lines marked generated are automatic drafts, not confirmed facts. Unmarked user lines were supplied or reviewed by the user.\n\n${options.repetitionRetry ? repetitionRetryInstruction + '\n\n' : ''}${sceneInstructions(options.virtualScenesEnabled ? options.scene : undefined, 'user', options.autoEnterScenes)}\n\n${draftInstructions(language, options.format, options.getToKnowEachOther, options.recoveryStage)}`,
     },
   ];
 }

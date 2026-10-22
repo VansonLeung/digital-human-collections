@@ -8,6 +8,9 @@ import {
 } from '@digital-human/shared';
 import { SpeechQueuePlayer } from './SpeechQueuePlayer';
 
+// The male reference is about 5 dB quieter than Mira's (1.8x amplitude).
+const malePlaybackGain = 1.8;
+
 export type UserSpeechContext = Partial<ConversationPreferences> & {
   sessionId: string;
   revision: number;
@@ -43,6 +46,8 @@ export class UserMessageSpeechController {
   private player = new SpeechQueuePlayer(
     () => {},
     () => {},
+    () => {},
+    malePlaybackGain,
   );
   private operation?: { controller: AbortController; group: string; speaking: boolean };
   private value: UserSpeechState = { phase: 'idle', automatic: false };
@@ -111,6 +116,9 @@ export class UserMessageSpeechController {
             : {
                 localizedProfanity: context.localizedProfanity ?? false,
                 getToKnowEachOther: context.getToKnowEachOther ?? false,
+                virtualScenesEnabled: context.virtualScenesEnabled ?? false,
+                autoEnterScenes: context.autoEnterScenes ?? false,
+                autoRecoverStalls: context.autoRecoverStalls ?? true,
                 aboutMe: context.aboutMe ?? '',
               }),
           language: context.language,

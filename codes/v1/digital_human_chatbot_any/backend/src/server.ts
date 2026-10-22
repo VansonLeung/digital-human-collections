@@ -71,6 +71,20 @@ server.on('upgrade', (request, socket, head) => {
             });
             session.stop();
           });
+        } else if (command.type === 'scene.configure') {
+          session.configureScenes(command.enabled);
+        } else if (command.type === 'scene.decide') {
+          if (!session.decideScene(command))
+            session.send(
+              {
+                type: 'error',
+                stage: 'scene',
+                message:
+                  'The scene changed or a reply is still active. Try again when it finishes.',
+                retryable: false,
+              },
+              null,
+            );
         } else if (command.type === 'turn.stop') {
           if (!command.turnId || session.active?.id === command.turnId) {
             session.stop();
@@ -92,6 +106,7 @@ server.on('upgrade', (request, socket, head) => {
                 retryable: true,
               });
             if (command.type === 'playback.failed') {
+              turn.succeeded = false;
               session.finish(turn);
               turn.controller.abort();
             } else if (turn.speechFinished) session.finish(turn);

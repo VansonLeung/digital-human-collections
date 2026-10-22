@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import { conversationPreferencesSchema } from './conversation.js';
+import { sceneSnapshotSchema, sceneStepSchema } from './scenes.js';
 import { phrasePerformanceSchema } from './performance.js';
 
 export * from './performance.js';
 export * from './llmReply.js';
 export * from './clientSettings.js';
 export * from './conversation.js';
+export * from './scenes.js';
 export * from './userSpeech.js';
 
 export const languageSchema = z.enum(['en', 'zh', 'yue']);
@@ -55,6 +57,14 @@ export const commandSchema = z.discriminatedUnion('type', [
     localizedProfanity: z.boolean().optional(),
     ...conversationPreferencesSchema.partial().shape,
     expectedRevision: z.number().int().nonnegative().optional(),
+  }),
+  z.object({ type: z.literal('scene.configure'), enabled: z.boolean() }),
+  z.object({
+    type: z.literal('scene.decide'),
+    proposalId: z.string(),
+    version: z.number().int().nonnegative(),
+    revision: z.number().int().nonnegative(),
+    accept: z.boolean(),
   }),
   z.object({ type: z.literal('turn.stop'), turnId: z.string().optional() }),
   z.object({ type: z.literal('session.reset') }),
@@ -127,6 +137,15 @@ const base = {
 
 export const eventSchema = z.discriminatedUnion('type', [
   z.object({ ...base, type: z.literal('session.ready') }),
+  z.object({ ...base, type: z.literal('scene.state'), scene: sceneSnapshotSchema }),
+  z.object({
+    ...base,
+    type: z.literal('scene.step'),
+    id: z.string(),
+    step: sceneStepSchema,
+    index: z.number().int().nonnegative(),
+    total: z.number().int().positive(),
+  }),
   z.object({
     ...base,
     type: z.literal('turn.started'),

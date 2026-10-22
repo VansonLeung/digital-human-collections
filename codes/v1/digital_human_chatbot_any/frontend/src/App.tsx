@@ -24,6 +24,7 @@ import {
   type Persona,
   type ServerEvent,
   type ReplyDiagnostic,
+  type SceneStep,
 } from '@digital-human/shared';
 import type { AvatarRenderer } from './avatars/types';
 import { SpeechQueuePlayer } from './audio/SpeechQueuePlayer';
@@ -37,12 +38,15 @@ import { usePhraseDisplay } from './hooks/usePhraseDisplay';
 import { useUserMessageSpeech } from './hooks/useUserMessageSpeech';
 import { ConversationFocusControls } from './components/ConversationFocusControls';
 import { UserMessageSpeechControls } from './components/UserMessageSpeechControls';
+import { useVirtualScenes } from './hooks/useVirtualScenes';
+import { SceneEventCard, SceneStatus, SceneProposalCard } from './components/SceneCards';
 import { TypingIndicator } from './components/TypingIndicator';
 
 type Message = {
   id: string;
   turnId?: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'scene';
+  sceneStep?: SceneStep;
   text: string;
   interrupted?: boolean;
   personaName?: string;
@@ -67,6 +71,9 @@ export function App() {
     language,
     localizedProfanity,
     getToKnowEachOther,
+    virtualScenesEnabled,
+    autoEnterScenes,
+    autoRecoverStalls,
     aboutMe,
     speech,
     muted,
@@ -158,6 +165,9 @@ export function App() {
     language,
     localizedProfanity,
     getToKnowEachOther,
+    virtualScenesEnabled,
+    autoEnterScenes,
+    autoRecoverStalls,
     aboutMe,
     revision,
     blocked: !connected || busy || recording || transcribing,
@@ -174,6 +184,9 @@ export function App() {
       language,
       localizedProfanity,
       getToKnowEachOther,
+      virtualScenesEnabled,
+      autoEnterScenes,
+      autoRecoverStalls,
       aboutMe,
     },
     draft,
@@ -225,12 +238,50 @@ export function App() {
     });
     setCaption(phrase.text);
   });
+  const virtualScenes = useVirtualScenes({
+    enabled: virtualScenesEnabled,
+    autoEnter: autoEnterScenes,
+    replyCompleted: completedRevision !== null && completedRevision === revision,
+    autoBlocked: !!draft.trim() || !!suggestion.preview,
+    connected,
+    blocked:
+      busy ||
+      phraseDisplay.revealing ||
+      recording ||
+      transcribing ||
+      userSpeech.active ||
+      suggestion.loading ||
+      !!error,
+    revision,
+    send: command,
+    onInteraction: () => {
+      autoReply.pause();
+      suggestion.cancel();
+      userSpeech.cancel(true);
+      proactive.touch();
+    },
+    onStep: (event) =>
+      setMessages((items) =>
+        items.some((item) => item.id === `scene:${event.id}`)
+          ? items
+          : [
+              ...items,
+              {
+                id: `scene:${event.id}`,
+                role: 'scene',
+                text: event.step.narration,
+                sceneStep: event.step,
+              },
+            ],
+      ),
+  });
   const autoReply = useAutoReply({
     enabled: autoReplyEnabled,
     delaySeconds: autoReplyDelaySeconds,
     maxTurns: autoReplyMaxTurns,
     completedRevision,
     blocked:
+      virtualScenes.pending ||
       !connected ||
       busy ||
       phraseDisplay.revealing ||
@@ -264,6 +315,7 @@ export function App() {
     enabled: proactiveEnabled && !autoReplyEnabled,
     delaySeconds: idleSeconds,
     blocked:
+      virtualScenes.pending ||
       userSpeech.active ||
       (!!userSpeech.plan && !userSpeech.automatic) ||
       !connected ||
@@ -367,7 +419,7 @@ export function App() {
 
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, state, autoReplyTyping]);
+  }, [messages, state, autoReplyTyping, virtualScenes.scene?.proposal?.id]);
 
   useEffect(
     () => () => {
@@ -432,6 +484,7 @@ export function App() {
     if (event.seq <= seq.current) return;
     seq.current = event.seq;
     setRevision(event.revision);
+    if (virtualScenes.receive(event)) return;
     if (event.type === 'session.ready') {
       setConnected(true);
       setState('Ready');
@@ -670,6 +723,9 @@ export function App() {
       speech: speech && avatarReady,
       localizedProfanity,
       getToKnowEachOther,
+      virtualScenesEnabled,
+      autoEnterScenes,
+      autoRecoverStalls,
       aboutMe,
       ...(spoken ? { expectedRevision: spoken.revision } : {}),
     });
@@ -693,6 +749,9 @@ export function App() {
       speech: speech && avatarReady,
       localizedProfanity,
       getToKnowEachOther,
+      virtualScenesEnabled,
+      autoEnterScenes,
+      autoRecoverStalls,
       aboutMe,
     });
   }
@@ -856,16 +915,31 @@ export function App() {
     else send();
   }
 
-  function updateConversationPreference(key: 'getToKnowEachOther', value: boolean): void;
+  function updateConversationPreference(
+    key: 'getToKnowEachOther' | 'virtualScenesEnabled' | 'autoEnterScenes' | 'autoRecoverStalls',
+    value: boolean,
+  ): void;
   function updateConversationPreference(key: 'aboutMe', value: string): void;
   function updateConversationPreference(
-    key: 'getToKnowEachOther' | 'aboutMe',
+    key:
+      | 'getToKnowEachOther'
+      | 'virtualScenesEnabled'
+      | 'autoEnterScenes'
+      | 'autoRecoverStalls'
+      | 'aboutMe',
     value: boolean | string,
   ) {
     autoReply.pause();
     suggestion.cancel();
     userSpeech.cancel(true);
-    if (key === 'getToKnowEachOther' && typeof value === 'boolean') preferences.update(key, value);
+    if (
+      (key === 'getToKnowEachOther' ||
+        key === 'virtualScenesEnabled' ||
+        key === 'autoEnterScenes' ||
+        key === 'autoRecoverStalls') &&
+      typeof value === 'boolean'
+    )
+      preferences.update(key, value);
     if (key === 'aboutMe' && typeof value === 'string') preferences.update(key, value);
   }
 
@@ -1042,6 +1116,7 @@ export function App() {
               <RotateCcw size={18} />
             </button>
           </div>
+          {virtualScenesEnabled && <SceneStatus scene={virtualScenes.scene} />}
           <div className="messages" role="log" aria-live="polite">
             {!messages.length && (
               <div className="welcome">
@@ -1083,24 +1158,35 @@ export function App() {
                 )}
               </div>
             )}
-            {messages.map((message) => (
-              <div key={message.id} className={`message ${message.role}`}>
-                <span className="message-label">
-                  {message.role === 'user'
-                    ? 'YOU'
-                    : (message.personaName || persona?.name)?.toUpperCase()}
-                </span>
-                <div className="bubble">
-                  {message.text || (
-                    <TypingIndicator
-                      label={`${message.personaName || persona?.name || 'Mira'} is typing`}
-                    />
-                  )}
-                  {message.interrupted && <span className="interrupted">Interrupted</span>}
-                  {message.notSent && <span className="interrupted">Not sent</span>}
+            {messages.map((message) =>
+              message.role === 'scene' && message.sceneStep ? (
+                <SceneEventCard key={message.id} step={message.sceneStep} />
+              ) : (
+                <div key={message.id} className={`message ${message.role}`}>
+                  <span className="message-label">
+                    {message.role === 'user'
+                      ? 'YOU'
+                      : (message.personaName || persona?.name)?.toUpperCase()}
+                  </span>
+                  <div className="bubble">
+                    {message.text || (
+                      <TypingIndicator
+                        label={`${message.personaName || persona?.name || 'Mira'} is typing`}
+                      />
+                    )}
+                    {message.interrupted && <span className="interrupted">Interrupted</span>}
+                    {message.notSent && <span className="interrupted">Not sent</span>}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ),
+            )}
+            {virtualScenesEnabled && (
+              <SceneProposalCard
+                scene={virtualScenes.scene}
+                disabled={disabled || !connected || virtualScenes.pending}
+                onDecide={virtualScenes.decide}
+              />
+            )}
             {autoReplyTyping && (
               <div className="message user auto-reply-typing">
                 <span className="message-label">YOU</span>
@@ -1368,6 +1454,18 @@ export function App() {
               <div className="settings-fields">
                 <ConversationFocusControls
                   getToKnowEachOther={getToKnowEachOther}
+                  virtualScenesEnabled={virtualScenesEnabled}
+                  autoEnterScenes={autoEnterScenes}
+                  autoRecoverStalls={autoRecoverStalls}
+                  onAutoEnterChange={(value) =>
+                    updateConversationPreference('autoEnterScenes', value)
+                  }
+                  onRecoveryChange={(value) =>
+                    updateConversationPreference('autoRecoverStalls', value)
+                  }
+                  onScenesChange={(value) =>
+                    updateConversationPreference('virtualScenesEnabled', value)
+                  }
                   aboutMe={aboutMe}
                   disabled={disabled}
                   onFocusChange={(value) =>

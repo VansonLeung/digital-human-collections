@@ -51,6 +51,7 @@ export class SpeechQueuePlayer {
     private mouth: (shape: Shape) => void,
     private mouthOpening: (value: number) => void,
     private speaking: (value: boolean) => void = () => {},
+    private playbackGain = 1,
   ) {}
 
   async unlock() {
@@ -93,11 +94,27 @@ export class SpeechQueuePlayer {
       if (!response.ok) throw new Error('Audio expired. Send another message.');
       const buffer = await this.context!.decodeAudioData(await response.arrayBuffer());
       if (generation !== this.generation) return;
+      this.applyPlaybackGain(buffer);
       this.loaded.set(phrase.phraseIndex, { phrase, buffer });
       this.schedule();
     } catch (error) {
       if (generation === this.generation && !signal.aborted) this.fail(error as Error);
     }
+  }
+
+  private applyPlaybackGain(buffer: AudioBuffer) {
+    if (this.playbackGain === 1) return;
+    const channels = Array.from({ length: buffer.numberOfChannels }, (_, channel) =>
+      buffer.getChannelData(channel),
+    );
+    let peak = 0;
+    for (const samples of channels)
+      for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+    if (!peak) return;
+    // Boost each clip consistently without letting its loudest peak clip.
+    const gain = Math.min(this.playbackGain, 0.98 / peak);
+    for (const samples of channels)
+      for (let index = 0; index < samples.length; index++) samples[index] *= gain;
   }
 
   finish(phraseCount: number) {

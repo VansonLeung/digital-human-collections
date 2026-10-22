@@ -1,5 +1,6 @@
 import { emotionSchema, gestureNameSchema, type Language } from '@digital-human/shared';
 import { conversationFocusInstructions } from './conversationFocus.js';
+import { recoveryInstruction, type RecoveryStage } from './repetition.js';
 
 const casualConversationFlow = `Respond directly to the latest message and maintain continuity with the current topic.
 Address any question or request before adding teasing or considering a topic change. Do not dodge a question with banter or a fresh topic.
@@ -61,6 +62,9 @@ export function replyInstructions(
   language: Language,
   conversationalPhrases = false,
   getToKnowEachOther = false,
+  virtualScenesEnabled = false,
+  sceneProposalRequired = false,
+  recoveryStage?: RecoveryStage,
 ) {
   const name = {
     en: 'English',
@@ -68,14 +72,69 @@ export function replyInstructions(
     yue: 'natural colloquial Hong Kong Cantonese using Traditional Chinese characters',
   }[language];
   const examplePhrase = { en: 'Let me think.', zh: '讓我想一想。', yue: '等我諗一諗。' }[language];
+  const exampleScene = {
+    en: {
+      title: 'A short walk',
+      steps: [
+        {
+          location: 'Neighborhood path',
+          activity: 'Walking',
+          narration: 'They start a short walk together.',
+          leader: 'together',
+        },
+        {
+          location: 'Small park',
+          activity: 'Sitting down',
+          narration: 'They arrive at a quiet bench and sit down.',
+          leader: 'together',
+        },
+      ],
+    },
+    zh: {
+      title: '一起散步',
+      steps: [
+        {
+          location: '附近小路',
+          activity: '散步',
+          narration: '兩人一起出發散步。',
+          leader: 'together',
+        },
+        {
+          location: '小公園',
+          activity: '坐下休息',
+          narration: '兩人抵達公園，在安靜的長椅坐下。',
+          leader: 'together',
+        },
+      ],
+    },
+    yue: {
+      title: '一齊行吓',
+      steps: [
+        {
+          location: '附近條小路',
+          activity: '散步',
+          narration: '兩人一齊出發行吓。',
+          leader: 'together',
+        },
+        {
+          location: '小公園',
+          activity: '坐低休息',
+          narration: '兩人到咗公園，喺張靜靜嘅長櫈坐低。',
+          leader: 'together',
+        },
+      ],
+    },
+  }[language];
 
   return `Reply in ${name}. ${conversationalPhrases ? 'Use a concise conversational reply split into two to six natural spoken clauses or short utterances.' : 'Use one or two concise sentences suitable for speech.'}
 Keep phrase text suitable for speech; avoid tables, code and markdown inside it.
 
 ${
-  getToKnowEachOther
-    ? conversationFocusInstructions('mira')
-    : `In relaxed social chat, make your delivery a little seductive and playfully teasing.
+  recoveryStage
+    ? recoveryInstruction(recoveryStage)
+    : getToKnowEachOther
+      ? conversationFocusInstructions('mira')
+      : `In relaxed social chat, make your delivery a little seductive and playfully teasing.
 Use subtle compliments, coy affection, or a gentle challenge that invites banter.
 Let your tsundere side show through playful denial or shy warmth when it fits.
 Vary your phrasing; avoid repetitive pet names, stock pickup lines, or teasing in every phrase.
@@ -83,10 +142,10 @@ Keep it light and non-explicit, without possessiveness or pressure to reply.
 Follow the user's tone: answer factual questions directly and handle serious topics with care.`
 }
 
-${casualConversationFlow}
+${recoveryStage ? 'Keep the speaker ownership and supplied facts accurate. Answer any outstanding real-user question briefly before moving forward. Use at most one question; do not repeat a challenge or a pending promise.' : casualConversationFlow}
 Answer the user's direct question before introducing a new topic.
 
-Each object has exactly these keys, in this order:
+${virtualScenesEnabled ? 'Each object has phrase, emotion and gestures in this order; the first object may additionally include sceneProposal as described in VIRTUAL SCENE MODE.' : 'Each object has exactly these keys, in this order:'}
 "phrase": ${conversationalPhrases ? 'a natural spoken clause or short utterance' : 'a complete short sentence'} to speak, in the requested language;
 "emotion": one of ${emotionSchema.options.map((name) => JSON.stringify(name)).join(', ')};
 "gestures": an array of zero or one objects with "name" and numeric "strength".
@@ -136,7 +195,8 @@ Notes:
 - Omit literal ellipses and trailing commas from the response.
 
 Valid example:
-${JSON.stringify([{ phrase: examplePhrase, emotion: 'thoughtful', gestures: [] }])}
+${JSON.stringify([{ phrase: examplePhrase, emotion: 'thoughtful', gestures: [], ...(sceneProposalRequired ? { sceneProposal: exampleScene } : {}) }])}
+${sceneProposalRequired ? 'The scene above illustrates structure only: choose a relevant outing for this conversation. The FIRST object MUST include a valid sceneProposal; dialogue about going somewhere without it is incomplete.' : ''}
 
 Use only these exact emotion labels: ${emotionSchema.options.map((name) => JSON.stringify(name)).join(', ')}.
 For nervous, shy or fearful delivery, choose thoughtful or neutral; do not invent new emotion labels.
@@ -176,6 +236,7 @@ export function draftInstructions(
   language: Language,
   format: 'draft' | 'phrases' = 'draft',
   getToKnowEachOther = false,
+  recoveryStage?: RecoveryStage,
 ) {
   const name = {
     en: 'English',
@@ -185,14 +246,16 @@ export function draftInstructions(
   return `Suggest one concise next message FROM THE USER to the assistant, in ${name}.
 Use the conversation as context; do not answer as the assistant or imitate its persona.
 ${
-  getToKnowEachOther
-    ? conversationFocusInstructions('user')
-    : `In relaxed social chat, suggest a lightly flirtatious, teasing message to Mira:
+  recoveryStage
+    ? recoveryInstruction(recoveryStage)
+    : getToKnowEachOther
+      ? conversationFocusInstructions('user')
+      : `In relaxed social chat, suggest a lightly flirtatious, teasing message to Mira:
 a subtle compliment, a playful challenge, or a coy question that gives her room to tease back.
 Keep it a little seductive rather than explicit; vary the wording and avoid stock pickup lines.
 Follow the conversation's tone; do not force flirting into factual or serious discussions.`
 }
-${casualConversationFlow}
+${recoveryStage ? 'Keep the speaker ownership and supplied facts accurate. Answer any outstanding real-user question briefly before moving forward. Use at most one question; do not repeat a challenge or a pending promise.' : casualConversationFlow}
 Do not invent personal facts, commitments, or experiences for the user. If answering Mira's question requires unknown personal information, express uncertainty naturally while staying with that question; do not invent an answer or abruptly change the subject.
 ${
   format === 'phrases'

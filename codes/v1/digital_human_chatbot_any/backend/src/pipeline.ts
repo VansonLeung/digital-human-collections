@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import type { Command, Persona, MouthCue, LlmRequestBody } from '@digital-human/shared';
+import type {
+  Command,
+  Persona,
+  MouthCue,
+  LlmRequestBody,
+  SpeechPhrase,
+  ScenePlan,
+} from '@digital-human/shared';
 import type { Config } from './config.js';
 import type { Session, ActiveTurn } from './sessions.js';
 import type { MediaStore } from './media.js';
@@ -9,6 +16,7 @@ import { mouthCues } from './services/lipsync.js';
 import { UpstreamError } from './services/http.js';
 import { resolveLanguage } from './services/language.js';
 import { JsonReplyParser, ReplyFormatError } from './llm/JsonReplyParser.js';
+import { repeatedReply, RepetitiveReplyError, repetitionAttempts } from './llm/repetition.js';
 import { PhraseQueue } from './speech/phraseQueue.js';
 import { saveReplyDiagnostic } from './llm/diagnostics.js';
 
@@ -79,11 +87,18 @@ export async function runTurn(
     return;
   }
 
+  session.configureScenes(command.virtualScenesEnabled ?? false);
+  const advanced = session.scene.beginTurn();
+  if (advanced) {
+    session.send({ type: 'scene.step', ...advanced }, null);
+    session.send({ type: 'scene.state', scene: session.scene.snapshot() }, null);
+  }
   const turn: ActiveTurn = {
     id: randomUUID(),
     controller: new AbortController(),
     mediaIds: new Set(),
     origin: proactive ? 'proactive' : 'user',
+    sceneVersion: session.scene.snapshot().enabled ? session.scene.snapshot().version : undefined,
   };
   session.suggestion?.abort();
   session.userSpeech?.abort();
@@ -139,6 +154,7 @@ export async function runTurn(
           message: 'Playback did not finish. Please try again.',
           retryable: true,
         });
+        turn.succeeded = false;
         session.finish(turn);
         turn.controller.abort();
       },
@@ -201,16 +217,34 @@ export async function runTurn(
     }
   }, turn.controller.signal);
 
-  const parser = new JsonReplyParser(
-    (text) => {
-      if (current()) session.send({ type: 'answer.delta', text });
-    },
-    (phrase) => {
-      if (!current()) return;
-      session.send({ type: 'answer.phrase', phraseIndex: parsedPhrases++, text: phrase.text });
-      if (command.speech) queue.push(phrase);
-    },
-  );
+  const guarded = proactive || (!proactive && command.automatic === true);
+  // Automatic turns are checked before any text or TTS escapes. Manual normal
+  // replies retain streaming; scene metadata is buffered/validated with dialogue.
+  const buffered = guarded || command.virtualScenesEnabled === true;
+  let pendingPhrases: SpeechPhrase[] = [];
+  let proposedScene: ScenePlan | undefined;
+  const emitPhrase = (phrase: SpeechPhrase) => {
+    if (!current()) return;
+    session.send({ type: 'answer.phrase', phraseIndex: parsedPhrases++, text: phrase.text });
+    if (command.speech) queue.push(phrase);
+  };
+  function createParser() {
+    return new JsonReplyParser(
+      (text) => {
+        if (current() && !buffered) session.send({ type: 'answer.delta', text });
+      },
+      (phrase) => {
+        if (buffered) pendingPhrases.push(phrase);
+        else emitPhrase(phrase);
+      },
+      command.virtualScenesEnabled
+        ? (proposal) => {
+            proposedScene = proposal;
+          }
+        : undefined,
+    );
+  }
+  let parser = createParser();
 
   try {
     session.send({ type: 'state.changed', state: 'Thinking' });
@@ -224,50 +258,85 @@ export async function runTurn(
             ...(command.automatic ? { generated: true } : {}),
           },
         ];
-    let receivedDelta = false;
-    const raw = await adapters.answer(
-      config,
-      history,
-      language,
-      (delta) => {
-        if (!current()) return;
-        receivedDelta = true;
-        truncated ||= rawOutput.length + delta.length > 16000;
-        rawOutput = (rawOutput + delta).slice(0, 16000);
-        if (!parserFailure) {
-          try {
-            parser.write(delta);
-          } catch (error) {
-            parserFailure = error;
+    let text = '';
+    const attempts = repetitionAttempts(command.autoRecoverStalls ?? true);
+    for (let attempt = 0; attempt < attempts.length; attempt++) {
+      turn.controller.signal.throwIfAborted();
+      pendingPhrases = [];
+      proposedScene = undefined;
+      parser = createParser();
+      rawOutput = '';
+      outputComplete = false;
+      finishReason = null;
+      truncated = false;
+      parserFailure = undefined;
+      let receivedDelta = false;
+      const raw = await adapters.answer(
+        config,
+        history,
+        language,
+        (delta) => {
+          if (!current()) return;
+          receivedDelta = true;
+          truncated ||= rawOutput.length + delta.length > 16000;
+          rawOutput = (rawOutput + delta).slice(0, 16000);
+          if (!parserFailure) {
+            try {
+              parser.write(delta);
+            } catch (error) {
+              parserFailure = error;
+            }
           }
-        }
-      },
-      turn.controller.signal,
-      {
-        proactive,
-        localizedProfanity: command.localizedProfanity ?? false,
-        getToKnowEachOther: command.getToKnowEachOther ?? false,
-        aboutMe: command.aboutMe ?? '',
-        conversationalPhrases: command.displayMode === 'phrases',
-        onFinishReason: (reason) => {
-          finishReason = reason;
         },
-        onRequestBody: (body) => {
-          requestBody = body;
+        turn.controller.signal,
+        {
+          proactive,
+          localizedProfanity: command.localizedProfanity ?? false,
+          getToKnowEachOther: command.getToKnowEachOther ?? false,
+          aboutMe: command.aboutMe ?? '',
+          virtualScenesEnabled: command.virtualScenesEnabled ?? false,
+          autoEnterScenes: command.autoEnterScenes ?? false,
+          scene: command.virtualScenesEnabled ? session.scene.snapshot() : undefined,
+          repetitionRetry: attempt === 1,
+          recoveryStage: attempts[attempt],
+          conversationalPhrases: command.displayMode === 'phrases',
+          onFinishReason: (reason) => {
+            finishReason = reason;
+          },
+          onRequestBody: (body) => {
+            requestBody = body;
+          },
         },
-      },
-    );
-
-    if (!current()) return;
-    outputComplete = true;
-    if (!receivedDelta) {
-      truncated = raw.length > 16000;
-      rawOutput = raw.slice(0, 16000);
-      parser.write(raw);
+      );
+      if (!current()) return;
+      outputComplete = true;
+      if (!receivedDelta) {
+        truncated = raw.length > 16000;
+        rawOutput = raw.slice(0, 16000);
+        parser.write(raw);
+      }
+      if (parserFailure) throw parserFailure;
+      text = parser.finish();
+      if (!text) throw new Error('LLM returned no spoken answer');
+      const match = guarded ? repeatedReply(text, history) : undefined;
+      if (!match) break;
+      if (attempt === attempts.length - 1) throw new RepetitiveReplyError(match, attempts.length);
+      session.send({
+        type: 'state.changed',
+        state:
+          attempts[attempt + 1] === 'related'
+            ? 'Trying a related angle'
+            : attempts[attempt + 1] === 'fresh'
+              ? 'Trying a fresh topic'
+              : 'Trying a different reply',
+      });
     }
-    if (parserFailure) throw parserFailure;
-    const text = parser.finish();
-    if (!text) throw new Error('LLM returned no spoken answer');
+    if (buffered) {
+      session.send({ type: 'answer.delta', text });
+      for (const phrase of pendingPhrases) emitPhrase(phrase);
+    }
+    if (proposedScene && session.scene.propose(proposedScene))
+      session.send({ type: 'scene.state', scene: session.scene.snapshot() }, null);
 
     session.history = [...history, { role: 'assistant' as const, content: text }].slice(-12);
     if (proactive) session.revision++;
@@ -275,6 +344,7 @@ export async function runTurn(
     session.send({ type: 'answer.final', text });
 
     if (!command.speech) {
+      turn.succeeded = true;
       session.finish(turn);
       return;
     }
@@ -283,6 +353,7 @@ export async function runTurn(
     if (!current()) return;
     if (!phraseCount) throw new Error('No speech phrases');
 
+    turn.succeeded = true;
     turn.speechFinished = true;
     session.send({ type: 'speech.queue.finished', phraseCount });
     watchPlayback();
@@ -321,9 +392,12 @@ export async function runTurn(
       type: 'error',
       stage: failedStage,
       message,
-      retryable: !(error instanceof UpstreamError) || ![401, 403, 413, 422].includes(error.status),
+      retryable:
+        !(error instanceof RepetitiveReplyError) &&
+        (!(error instanceof UpstreamError) || ![401, 403, 413, 422].includes(error.status)),
       diagnostic,
     });
+    turn.succeeded = false;
     session.finish(turn);
     turn.controller.abort();
   }

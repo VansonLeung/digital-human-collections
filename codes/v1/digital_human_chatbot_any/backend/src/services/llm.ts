@@ -1,8 +1,9 @@
-import type { Language, LlmRequestBody, ConversationPreferences } from '@digital-human/shared';
+import type { Language, LlmRequestBody } from '@digital-human/shared';
 import type { Config } from '../config.js';
 import { request, stageSignal, readLimited } from './http.js';
 import {
   buildReplyMessages,
+  type GenerationPreferences,
   type ChatMessage,
   type CompletionMessage,
 } from '../llm/requestMessages.js';
@@ -134,7 +135,7 @@ export async function answer(
   language: Language,
   onDelta: (text: string) => void,
   parent: AbortSignal,
-  options?: Partial<ConversationPreferences> & {
+  options?: GenerationPreferences & {
     proactive?: boolean;
     conversationalPhrases?: boolean;
     localizedProfanity?: boolean;

@@ -147,6 +147,7 @@ export async function createApplication(config: Config) {
       return res.status(409).json({
         error: 'The conversation changed or another task is active. Try again when it finishes.',
       });
+    session.configureScenes(parsed.data.virtualScenesEnabled);
     const controller = new AbortController();
     session.suggestion = controller;
     session.proactive.lastActivity = Date.now();
@@ -164,7 +165,10 @@ export async function createApplication(config: Config) {
         language,
         controller.signal,
         parsed.data.localizedProfanity,
-        parsed.data,
+        {
+          ...parsed.data,
+          scene: parsed.data.virtualScenesEnabled ? session.scene.snapshot() : undefined,
+        },
       );
       if (controller.signal.aborted || session.revision !== revision || session.active)
         return res

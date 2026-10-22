@@ -300,6 +300,12 @@ are marked **Not sent** and an unchanged manual draft/preview remains editable.
 Pause/Resume and mute apply to the active speaker; Mira starts only after the
 male voice finishes. The backend also rejects stale revision submissions.
 
+Both male speech modes use a 1.8x playback gain (about +5.1 dB) to compensate
+for the quieter male reference. `malePlaybackGain` in
+`frontend/src/audio/UserMessageSpeechController.ts` controls it. Each decoded
+clip caps its gain at a 0.98 peak to avoid clipping; mute/unmute retains the
+boost. Mira keeps her existing playback level.
+
 The preparation endpoint `/api/sessions/:id/user-message/prepare` returns
 `{phrases: string[], language, revision}` and does not synthesize or modify
 history. `/user-message/speech` synthesizes one validated phrase with the
@@ -390,6 +396,78 @@ quotations, names, numbers and technical terms remain allowed. This is prompt
 guidance, not automatic paraphrase rejection or extra LLM retry calls.
 Empty completions and invalid drafts include raw-output diagnostics, completion
 status and finish reason instead of the generic service error.
+
+### Virtual scenes and automatic repetition checks
+
+**Conversation settings → Virtual scenes · 情境推進** is optional, defaults off,
+and is remembered in browser settings. With it enabled, Mira can attach a
+validated `sceneProposal` to the first phrase object. A plan contains a short
+title and two to six distinct location/activity/narration/leader steps. The plan
+is a suggestion until **Start this scene** is chosen or the optional
+**Automatically enter suggested scenes · 自動開始情境** setting starts it. That
+setting defaults off, is saved in this browser, and waits for the successful
+Mira reply's audio or text-phrase display to finish. It waits while a draft or
+preview is present and never starts a scene from an interrupted/failed reply.
+The frontend sends one versioned decision for a validated pending proposal;
+stale decisions remain rejected by the backend. Auto-entry does not pause the
+automatic conversation. **Keep chatting** dismisses the proposal and suppresses
+that title for the session. Both automatic and proactive chat continue normally
+in the current setting while a proposal is pending. Generated user dialogue
+cannot accept a scene by saying yes. New proposals are rejected while an outing
+is unfinished.
+
+`backend/src/scenes/VirtualScene.ts` owns authoritative per-session state. After
+two successfully completed Mira turns, it advances one small step at the start
+of the next turn. Spoken turns count only after playback completion. Stop,
+errors and failed playback do not count. Advancing at the next request also
+waits for frontend text-phrase pacing before showing the next event. Both
+speakers receive current/completed steps and explicit leader ownership. A major
+change uses the same manual decision or enabled auto-entry setting. Scene changes advance the
+conversation revision and cancel stale suggestions or spoken plans. Reset
+clears scene state and cards; a browser reload remembers the toggle but starts
+a new conversation, not an old outing.
+
+`scene.state` carries the snapshot, `scene.step` carries a short text event,
+and `scene.configure`/`scene.decide` control the opt-in setting and decisions.
+`useVirtualScenes.ts` and `SceneCards.tsx` keep scene UI separate from audio and
+avatar controls. Narration is rendered only in cards: it never enters saved
+spoken history, TTS requests, user phrase plans, or avatar gestures. Fictional
+actions do not establish real-user biographical facts. Disabling the mode omits
+scene guidance and proposals while keeping earlier scene cards in the chat log.
+This version provides text scenes, not VRM locomotion or background changes.
+
+`backend/src/llm/repetition.ts` checks text suggestions, automatic spoken user
+phrases, and Mira's automatic/proactive turns against the last six conversation
+messages. It detects normalized exact copies and strong character-trigram
+overlap for turns of at least 24 letters/digits. It also detects replies assembled
+from at least two substantial recycled clauses across recent messages, covering
+most of the candidate. Brief confirmations are allowed; this conservative check
+is not a semantic repetition classifier.
+
+**Automatically recover stalled conversations · 自動打破重複** defaults on and
+is saved in this browser. A matched reply first gets the usual regeneration.
+If that still repeats, two further generations try a **related angle**, then a
+**fresh topic**. Recovery uses a shortened, explicitly labelled transcript from
+before the detected loop, with confirmed profile data and authoritative scene
+state retained. The fresh-topic request retains the latest real-user request
+and its answer when available, so resolved questions do not look unanswered.
+The normal topic-preservation and banter pressure are replaced with the recovery
+direction. The complete stored conversation is not rewritten or cleared.
+
+There are at most four generations per incident (two with recovery off). The
+existing automatic turn limit still applies. A distinct result continues the
+pending turn; no user message is resubmitted or spoken a second time. Exhaustion
+pauses automation with the final raw output/request and attempt count available
+in diagnostics. Stop cancels recovery. Manual faithful rewrites remain unchanged
+and can reproduce their source exactly.
+
+Automatic Mira turns are buffered until their complete validated text passes the
+check, before text/TTS is released. Scene-enabled Mira replies also buffer their
+metadata and dialogue together. This increases time to first speech compared
+with ordinary streamed manual replies, which remain streamed when scenes are off.
+No extra LLM call is made for normal distinct replies; a detected repeat adds at
+most three (one ordinary retry, one related angle and one fresh topic). Rejected
+attempts never add history, scene proposals, speech or bubbles.
 
 ### Getting to know each other and the user profile
 

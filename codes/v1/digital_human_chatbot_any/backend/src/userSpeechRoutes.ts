@@ -84,6 +84,7 @@ export function registerUserSpeechRoutes(
           return res
             .status(409)
             .json({ error: 'Wait for Mira to reply before generating an automatic message.' });
+        if (input.kind === 'automatic') session.configureScenes(input.virtualScenesEnabled);
         const text = input.kind === 'rewrite' ? input.text : '';
         const language = resolveLanguage(text, input.language, session.language);
         const phrases = await generateUserPhrases(
@@ -94,7 +95,9 @@ export function registerUserSpeechRoutes(
           text,
           controller.signal,
           input.kind === 'automatic' && input.localizedProfanity,
-          input.kind === 'automatic' ? input : {},
+          input.kind === 'automatic'
+            ? { ...input, scene: input.virtualScenesEnabled ? session.scene.snapshot() : undefined }
+            : {},
         );
         if (!current())
           return res.status(409).json({ error: 'Spoken-message preparation was cancelled.' });

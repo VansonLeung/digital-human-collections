@@ -38,6 +38,10 @@ for (let i = 0; i < rate * seconds; i++) {
   wav.writeInt16LE(Math.round(value * 32767), 44 + i * 2);
 }
 
+const loudWav = Buffer.from(wav);
+for (let offset = 44; offset < loudWav.length; offset += 2)
+  loudWav.writeInt16LE(Math.round(wav.readInt16LE(offset) * 6.5), offset);
+
 const server = await createServer({
   configFile: false,
   root: fileURLToPath(new URL('../frontend', import.meta.url)),
@@ -49,7 +53,7 @@ server.middlewares.use((req, res, next) => {
   if (req.url?.startsWith('/voice.wav')) {
     const send = () => {
       res.setHeader('Content-Type', 'audio/wav');
-      res.end(wav);
+      res.end(req.url?.includes('loud') ? loudWav : wav);
     };
     if (req.url.includes('delay')) setTimeout(send, 250);
     else send();
@@ -184,6 +188,58 @@ try {
   assert.equal(result.stopTalking, false);
   assert.equal(result.naturalTalking, false);
   assert.equal(result.canceledTalking, false);
+  const volume = await page.evaluate(async () => {
+    const moduleUrl = '/src/audio/playback.ts';
+    const { SpeechPlayer } = await import(moduleUrl);
+    const player = new SpeechPlayer(
+      () => {},
+      () => {},
+      () => {},
+      1.8,
+    );
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    try {
+      await player.play(
+        '/voice.wav',
+        [],
+        () => {},
+        () => {},
+        'amplitude',
+      );
+      const probe = player.context.createAnalyser();
+      probe.fftSize = 2048;
+      player.gain.connect(probe);
+      const peak = () => {
+        const samples = new Float32Array(probe.fftSize);
+        probe.getFloatTimeDomainData(samples);
+        return Math.max(...samples.map(Math.abs));
+      };
+      await wait(600);
+      const boostedPeak = peak();
+      player.setMuted(true);
+      await wait(120);
+      const mutedPeak = peak();
+      player.setMuted(false);
+      await wait(120);
+      const unmutedPeak = peak();
+      player.stop();
+      await player.play(
+        '/voice.wav?loud',
+        [],
+        () => {},
+        () => {},
+        'amplitude',
+      );
+      await wait(600);
+      return { boostedPeak, mutedPeak, unmutedPeak, limitedPeak: peak() };
+    } finally {
+      player.dispose();
+    }
+  });
+  assert.ok(Math.abs(volume.boostedPeak - 0.12 * 1.8) < 0.005);
+  assert.equal(volume.mutedPeak, 0);
+  assert.ok(Math.abs(volume.unmutedPeak - volume.boostedPeak) < 0.005);
+  assert.ok(volume.limitedPeak > 0.95 && volume.limitedPeak < 0.99);
   console.log(
     JSON.stringify(
       {
@@ -197,8 +253,11 @@ try {
           'natural completion',
           'Rhubarb playback',
           'Stop during audio fetch',
+          'male playback boost survives mute and unmute',
+          'loud male clips retain peak headroom',
         ],
         measurements: result,
+        volume,
       },
       null,
       2,

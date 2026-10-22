@@ -1,6 +1,8 @@
 import { jsonrepair } from 'jsonrepair';
 import {
   llmPhraseSchema,
+  scenePlanSchema,
+  type ScenePlan,
   replyLimits,
   replyPhraseTextSchema,
   type SpeechPhrase,
@@ -17,7 +19,7 @@ export class ReplyFormatError extends Error {
 }
 
 /** Only a fully closed object is eligible for repair. Never complete streamed text. */
-function parsePhrase(source: string): SpeechPhrase {
+function parsePhrase(source: string, onSceneProposal?: (plan: ScenePlan) => void): SpeechPhrase {
   let value: unknown;
   let repairError: string | undefined;
   let repairedOutput: string | undefined;
@@ -42,6 +44,13 @@ function parsePhrase(source: string): SpeechPhrase {
     }
   }
 
+  if (onSceneProposal && value && typeof value === 'object' && !Array.isArray(value)) {
+    const { sceneProposal, ...dialogue } = value as Record<string, unknown>;
+    value = dialogue;
+    const proposal = scenePlanSchema.safeParse(sceneProposal);
+    if (proposal.success && llmPhraseSchema.safeParse(dialogue).success)
+      onSceneProposal(proposal.data);
+  }
   const parsed = llmPhraseSchema.safeParse(value);
   if (parsed.success) {
     const { phrase, emotion, gestures } = parsed.data;
@@ -93,6 +102,7 @@ export class JsonReplyParser {
   constructor(
     private onText: (text: string) => void,
     private onPhrase: (phrase: SpeechPhrase) => void,
+    private onSceneProposal?: (plan: ScenePlan) => void,
   ) {}
 
   write(delta: string) {
@@ -161,7 +171,14 @@ export class JsonReplyParser {
   private emit(source: string) {
     if (this.phrases >= replyLimits.phrases)
       throw new ReplyFormatError('The JSON reply contained too many phrases.');
-    const phrase = parsePhrase(source);
+    const phrase = parsePhrase(
+      source,
+      this.onSceneProposal
+        ? (proposal) => {
+            if (!this.phrases) this.onSceneProposal!(proposal);
+          }
+        : undefined,
+    );
     const text = `${this.phrases ? ' ' : ''}${phrase.text}`;
     this.phrases++;
     this.clean += text;

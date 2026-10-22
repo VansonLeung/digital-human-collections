@@ -1,14 +1,10 @@
 import { z } from 'zod';
 import { jsonrepair } from 'jsonrepair';
-import {
-  userPhraseListSchema,
-  type Language,
-  type LlmRequestBody,
-  type ConversationPreferences,
-} from '@digital-human/shared';
+import { userPhraseListSchema, type Language, type LlmRequestBody } from '@digital-human/shared';
 import type { Config } from '../config.js';
 import { complete, type ChatMessage } from '../services/llm.js';
-import { buildDraftMessages } from './requestMessages.js';
+import { repeatedReply, RepetitiveReplyError, repetitionAttempts } from './repetition.js';
+import { buildDraftMessages, type GenerationPreferences } from './requestMessages.js';
 import { ReplyFormatError } from './JsonReplyParser.js';
 import { userPhraseInstructions } from './prompts.js';
 
@@ -22,13 +18,18 @@ export async function generateUserPhrases(
   text: string,
   signal: AbortSignal,
   localizedProfanity = false,
-  preferences: Partial<ConversationPreferences> = {},
+  preferences: GenerationPreferences = {},
 ) {
   const contract = userPhraseInstructions(language);
-  const messages =
+  const messages = (
+    repetitionRetry = false,
+    recoveryStage?: GenerationPreferences['recoveryStage'],
+  ) =>
     kind === 'automatic'
       ? buildDraftMessages(history, language, {
           ...preferences,
+          repetitionRetry,
+          recoveryStage,
           format: 'phrases',
           localizedProfanity,
         })
@@ -48,29 +49,45 @@ export async function generateUserPhrases(
   let finishReason: string | null = null;
   let outputComplete = false;
   try {
-    await complete(
-      config,
-      messages,
-      (delta) => {
-        raw = (raw + delta).slice(0, 16000);
-      },
-      signal,
-      {
-        onRequestBody: (body) => {
-          requestBody = body;
-        },
-        onFinishReason: (reason) => {
-          finishReason = reason;
-        },
-      },
+    const attempts = repetitionAttempts(
+      kind === 'automatic' && preferences.autoRecoverStalls !== false,
     );
-    outputComplete = true;
-    return outputSchema.parse(JSON.parse(jsonrepair(raw))).phrases;
+    for (let attempt = 0; attempt < attempts.length; attempt++) {
+      signal.throwIfAborted();
+      raw = '';
+      outputComplete = false;
+      finishReason = null;
+      await complete(
+        config,
+        messages(attempt === 1, attempts[attempt]),
+        (delta) => {
+          raw = (raw + delta).slice(0, 16000);
+        },
+        signal,
+        {
+          onRequestBody: (body) => {
+            requestBody = body;
+          },
+          onFinishReason: (reason) => {
+            finishReason = reason;
+          },
+        },
+      );
+      outputComplete = true;
+      const phrases = outputSchema.parse(JSON.parse(jsonrepair(raw))).phrases;
+      const match = kind === 'automatic' ? repeatedReply(phrases.join(' '), history) : undefined;
+      if (!match) return phrases;
+      if (attempt === attempts.length - 1) throw new RepetitiveReplyError(match, attempts.length);
+    }
+    throw new Error('Spoken suggestion retry exhausted');
   } catch (error) {
     if (signal.aborted) throw error;
     throw new ReplyFormatError(
-      'The spoken message could not be prepared. Inspect the LLM details and try again.',
+      error instanceof RepetitiveReplyError
+        ? error.message
+        : 'The spoken message could not be prepared. Inspect the LLM details and try again.',
       {
+        ...(error instanceof RepetitiveReplyError ? error.details : {}),
         source: raw,
         requestBody,
         finishReason,
